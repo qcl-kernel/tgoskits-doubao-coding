@@ -98,246 +98,273 @@ Axvisor 作为统一底座，负责把智能侧 guest 与实时侧 CPU 放在同
 
 ## 3. 任务一：Axvisor 实时性与隔离基础设计
 
-### 3.1 任务目标
+### 3.1 整体方案
 
-任务一的目标是为同一硬件上的智能侧 guest 和实时控制任务建立可解释、可验证的隔离底座。智能侧需要运行 StarryOS、Python、NPU 推理、文件系统和网络协议等通用负载；控制侧则需要稳定执行双轮足机器人的 8ms 平衡闭环。两类负载的实时性要求不同，不能简单把控制任务放进普通 guest 中，再依赖 vCPU 调度、虚拟中断和普通宿主任务共同竞争 CPU 时间。
+任务一面向同一硬件同时承载智能侧客户机和实时控制任务的场景。StarryOS 负责 AI 推理、文件系统、网络和设备服务，双轮足机器人平衡控制等高频任务则由 Axvisor/ArceOS 宿主直接运行。若两类负载共享普通 SMP 调度域，即使把控制任务设为高优先级，vCPU、虚拟设备后端、普通 IRQ、锁竞争和长时间关中断临界区仍会进入控制周期，无法给出可解释的实时性边界。
 
-本方案以 4 个物理核心为基准，将 `pCPU0..2` 划为虚拟化域，固定承载 Axvisor 普通运行时和 StarryOS 的 3 个 vCPU；将 `pCPU3` 划为实时域，直接运行 Axvisor/ArceOS 宿主中的实时任务。实时任务不经过 guest world switch，也不与 vCPU 共享 run queue。该形态属于单一 Axvisor 镜像内的静态 CPU 分区式 AMP：CPU 和调度域被隔离，但实时任务仍与 Axvisor 共享宿主地址空间，因此第一阶段提供的是调度与资源所有权隔离，而不是双镜像 AMP 的故障隔离。
+本方案按“执行资源、调度语义、内核临界区”三层收敛实时路径：
 
-任务一的成功标准不是“创建一个高优先级任务”，而是同时满足以下条件：
+1. 通过静态 CPU 分区建立实时域，阻止 vCPU 和普通宿主任务进入实时核；
+2. 通过单核 RT FIFO 和 PI mutex 保证高优先级任务的运行顺序，并抑制锁等待中的优先级反转；
+3. 通过 spin-noirq 长持锁检测和锁类型治理，避免本地 timer IRQ 被长期屏蔽，从而保证定时唤醒和高优先级抢占能够真正发生。
 
-- StarryOS 看到 3 个 vCPU，且对应 vCPU task 只能运行在 `pCPU0..2`。
-- 实时任务只能运行在 `pCPU3`，不会迁移到虚拟化域。
-- 普通 Axvisor worker、虚拟设备后端、文件系统、网络和控制台任务不能进入 `pCPU3`。
-- 非实时外部 IRQ 不路由到 `pCPU3`；该核只处理本地实时 timer、实时设备 IRQ 和明确允许的 doorbell/IPI。
-- 在 StarryOS CPU、网络和存储压力下，实时周期任务仍能报告可复现的最大唤醒时延、执行抖动和 deadline miss 数。
-- 编译期将实时核 ID 配置为 `-1` 时不建立实时域，也不运行实时任务；现有 Axvisor 的 CPU、VM、IRQ 和测试行为保持不变。
+```text
+build TOML 选择实时核
+        │
+        ▼
+SMP 初始化划分 CPU 所有权
+   ┌──────────────┬─────────────────┐
+   │ 虚拟化域      │ 实时域           │
+   │ Starry vCPU   │ RT FIFO         │
+   │ VM/I/O worker │ PI mutex        │
+   │ 普通 IRQ      │ RT timer/IRQ    │
+   └──────────────┴─────────────────┘
+        │                  │
+        └──── 有界命令 ────┘
+                           │
+                           ▼
+                 spin-noirq 检测与治理
+```
 
-### 3.2 验证 bare、guest 与 AMP 方案实时性差异
+以 4 个物理核心为例，`pCPU0..2` 承载 Axvisor 普通运行时和 StarryOS vCPU，`pCPU3` 作为实时域运行宿主实时任务。该方案属于单一 Axvisor 镜像内的静态 CPU 分区式 AMP：它提供 CPU、调度和资源所有权隔离，但实时任务仍与 Axvisor 共享地址空间、缓存和内存总线，因此不等同于双镜像 AMP 的故障隔离，也不能只凭 QEMU 数据宣称硬实时。
 
-任务一先对比 `bare RTOS`、`RTOS guest` 和 `Axvisor AMP` 三种路径。`bare RTOS` 表示 QEMU 直接运行 FreeRTOS，是没有虚拟化隔离时的性能基线；`RTOS guest` 表示 FreeRTOS 作为 Axvisor guest 运行，能够获得 VM 隔离，但调度、中断和抢占仍经过 vCPU、虚拟中断和 hypervisor 返回链路；`Axvisor AMP` 则把高频实时控制从 guest 中移出，在 Axvisor 侧保留实时执行资源，只让智能侧 guest 通过低频命令影响控制目标。
+任务一的验收不止是“高优先级任务能够创建”，还要求：
+
+- 实时任务只在编译期指定的物理核运行，普通任务和 vCPU 不得迁入；
+- 高优先级任务 ready 后，RT FIFO 能及时选择并抢占低优先级任务；
+- 高优先级任务等待低优先级 mutex owner 时，owner 能继承优先级并完成释放；
+- 实时核的 timer IRQ 不被无界的 spin-noirq 临界区长期阻塞；
+- 在 guest CPU、网络和存储压力下记录 P50、P99、最大延迟与 deadline miss；
+- 配置 `realtime_cpu_id = -1` 时关闭实时域并保持原有 Axvisor 行为。
+
+### 3.2 实时域隔离方案、PR 与测试对比
+
+#### 3.2.1 CPU 分区与任务创建
+
+实时核是编译期配置，而不是运行时环境变量。Axvisor build TOML 使用 `realtime_cpu_id` 指定逻辑 CPU ID；`-1` 表示关闭实时域。构建边界将其转换为 `Option<CpuId>`，SMP 初始化再检查该 CPU 是否在线、是否超出 capacity、是否误选 BSP。非法配置必须在 VM 启动和实时任务创建前失败，不能静默改选其他 CPU。
+
+```toml
+# 4 核 AMP 示例
+realtime_cpu_id = 3
+```
+
+启用后统一派生：
+
+```text
+online_cpu_mask         = 0b1111
+realtime_cpu_mask       = 0b1000
+virtualization_cpu_mask = 0b0111
+
+Starry vCPU0 -> pCPU0
+Starry vCPU1 -> pCPU1
+Starry vCPU2 -> pCPU2
+host RT task -> pCPU3
+```
+
+普通 Axvisor task 的默认 affinity 使用 `virtualization_cpu_mask`；AxVM placement 校验拒绝任何与实时核相交的 `phys_cpu_sets`。实时任务通过 `spawn_realtime(...)` 创建，入口在任务首次进入 run queue 前设置唯一实时核 affinity 和正实时优先级，调用方不接收 CPU ID，也不构造 `AxCpuMask`。AArch64 SMP 初始化在实时核跳过 AxVM 硬件虚拟化初始化，避免把该核重新纳入 vCPU 执行资源。
+
+CPU 分区还必须延伸到 IRQ、设备和内存所有权。实时核只接收 local RT timer、RT-owned device IRQ 和明确允许的 doorbell/IPI；控制台、块设备、网络和 guest 后端 IRQ 固定到虚拟化域。RT stack、消息环和统计区在启动阶段预分配，实时循环不访问文件系统、不同步打印，也不获取由虚拟化域长期持有的锁。静态绑核不能隔离 LLC、DRAM controller 和固件中断，这些共享资源必须在板级压力测试中单独量化。
+
+#### 3.2.2 方案对比
+
+| 方案 | 实时路径 | 优点 | 主要代价 | 定位 |
+| --- | --- | --- | --- | --- |
+| bare RTOS | 控制任务直接运行在物理 CPU | 路径最短，可作为性能基线 | 无虚拟化整合能力 | 对照基线 |
+| StarryOS/RTOS guest | 控制任务运行在 vCPU | VM 隔离清楚，软件栈完整 | 经过 vCPU 调度、虚拟中断和 VM exit/entry | guest 对照 |
+| 普通 SMP + 高优先级任务 | RT task 与 vCPU/host task 共享 CPU | 改动少 | 无 CPU 所有权边界，普通 IRQ 和 worker 可干扰 | 不采用 |
+| 静态 CPU 分区 + RT FIFO | 虚拟化域运行 guest，实时域运行 host RT task | 复用现有调度、绑核和 IRQ 能力 | 仍共享宿主地址空间与硬件资源 | 第一阶段采用 |
+| 独立 RT 镜像 | 固件分别启动 Axvisor 与 RTOS | 故障和内存隔离更强 | 启动、内存、IRQ、设备和通信改造大 | 后续评估 |
+
+QEMU noload 对比中，RTOS guest 相对 bare RTOS 保留约 93.9% 到 99.9% 的基线效率，但调度、中断和抢占仍处于虚拟化链路。Axvisor AMP 将高频控制从 guest 中移出，QEMU 下任务切换、抢占、中断和信号量平均耗时为 2.859us 到 5.263us。
 
 ![QEMU 环境三种实时路径对比](assets/amp-qemu-three-way.svg)
 
-从 QEMU noload 数据看，RTOS guest 相对直接 RTOS 仍保留约 93.9% 到 99.9% 的基线效率，说明 Axvisor guest 方案本身具备可接受的基础开销。但这也说明调度、中断和抢占路径仍处在虚拟化链路中；对于双轮足 8ms 平衡闭环，这部分抖动会直接进入控制周期预算。QEMU 下 Axvisor AMP 路径的任务切换、抢占、中断和信号量平均耗时处于 2.859us 到 5.263us 区间，验证了把控制路径从 guest 中拆出来的可行性。
+RK3588 实测中，任务切换平均 `1066 ns`、抢占平均 `1023 ns`、中断平均 `654 ns`、信号量 shuffle 平均 `1022 ns`，1ms tick jitter 为 `4084 ns`，约占 8ms 控制周期的 `0.0511%`。
 
 ![RK3588 真机 Axvisor AMP 实测数据](assets/amp-rk3588-realtime.svg)
 
-真机 RK3588 上，Axvisor AMP 路径进一步体现出实时控制优势：任务切换平均 `1066 ns`，抢占平均 `1023 ns`，中断平均 `654 ns`，信号量 shuffle 平均 `1022 ns`，1ms tick jitter 为 `4084 ns`。`4084 ns` 只占 8ms 控制周期约 `0.0511%`，为 EKF/LQR 控制计算、MPU6050 读取、Lingkong 电机 UART 事务和安全降级逻辑留下主要时间预算。
-
-基于上述验证，任务一选择 AMP 而不是“控制侧 RTOS guest”作为第一阶段实时控制方案。保持现状的 RTOS guest 方案虽然隔离边界更清楚，但控制周期仍经过 vCPU 调度、VM exit/entry 和虚拟中断；完全独立的裸机 RT 镜像具有更强故障隔离，却需要重新设计固件启动、内存划分、中断控制器所有权和跨镜像通信。静态 CPU 分区式 AMP 能复用现有 `axtask`、AxVM vCPU affinity 和 IRQ framework，以较小改动先形成可测量闭环。
-
-[#2160](https://github.com/rcore-os/tgoskits/pull/2160) 已建立 Axvisor 实时 CPU 所有权和 secondary CPU 启动分流的设计基础，但其独立 RT runtime 路线明确不初始化普通 `ax_task`。本方案以 [#2161](https://github.com/rcore-os/tgoskits/pull/2161) 的 RT FIFO 为调度基础，因此集成时不能直接让 `pCPU3` 跳入无调度器的静态 park/executor 路径，而应为 `pCPU3` 保留一个受限的单核 `axtask` 调度域。#2160 的 CPU 所有权、VM placement 校验和资源排除原则继续复用；RT CPU 是否初始化 `axtask` 则由本方案重新明确。
-
-### 3.3 ArceOS 实时性能力缺口
-
-AMP 方案确定后，还需要检查预留 CPU 上的 ArceOS/实时任务能力是否足够。当前 ArceOS 默认 FIFO 调度器适合作为普通协作式 ready queue，但它只按入队顺序选择任务，不表达“高优先级任务优先运行”的实时语义。即使任务结构中已有 `sched_priority` 字段，默认 FIFO 也不会读取这个字段；高优先级任务如果后入队，仍可能排在先入队的低优先级任务之后。
-
-另一个问题是锁等待路径没有真正使用优先级。sleepable mutex 原有实现只记录 `owner_id` 和 wait queue，高优先级任务等待低优先级 owner 持有的 mutex 时，不会把优先级捐赠给 owner。如果此时中优先级任务持续运行，就会出现典型优先级反转：高优先级控制任务被低优先级持锁者间接阻塞，而低优先级持锁者又被中优先级任务抢占，导致 mutex 无法及时释放。
-
-这些缺口说明 mailbox 只能作为智能侧到实时侧的命令通道，不能替代调度器和同步原语的实时语义。完整实时路径需要同时满足三个条件：ready queue 按有效优先级选择任务；timer tick 能在更高优先级任务 ready 时请求重调度；mutex 争用时能让 owner 临时继承 waiter 的优先级。
-
-单核 RT FIFO 也不能单独完成 AMP 隔离。当前普通任务默认可以使用完整 CPU mask，vCPU affinity 只约束 vCPU task，自身不会排除控制台、块设备、网络、VM 管理和其他后台任务。若这些任务仍能进入 `pCPU3`，或者普通设备 IRQ 仍路由到该核，即使实时任务优先级最高，也会受到硬中断、共享锁、内存分配和 cache/memory bus 争用影响。因此任务一必须把 CPU、任务、IRQ、内存和通信所有权作为一个整体设计。
-
-### 3.4 方案比较与架构选择
-
-| 方案 | 实时路径 | 优点 | 主要代价 | 结论 |
-| --- | --- | --- | --- | --- |
-| StarryOS/RTOS guest | 控制任务运行在 vCPU 中 | VM 隔离清楚，软件栈完整 | 经过 vCPU 调度、虚拟中断和 VM exit/entry | 保留为对照基线 |
-| 全部物理核使用普通 SMP 调度 | RT task 与 vCPU/host task 共享 CPU 集 | 改动最少 | 无法给出可解释的最坏时延边界 | 不采用 |
-| 静态 CPU 分区 + 单核 RT FIFO | `pCPU0..2` 运行 vCPU，`pCPU3` 运行宿主 RT task | 复用现有调度、绑核和 IRQ 能力，易形成最小闭环 | 与 Axvisor 共享地址空间和部分硬件资源 | 第一阶段采用 |
-| 独立 RT runtime/静态 executor | `pCPU3` 不初始化 `axtask` | 热路径更小，隔离更强 | 无法直接复用 #2161/#2162，需独立 timer、executor 和同步模型 | 后续演进方案 |
-| 独立裸机 RT 镜像 | 固件分别启动 Axvisor 与 RTOS | 故障和内存隔离最强 | 启动、内存、IRQ、设备和通信所有权改造最大 | 严格硬实时阶段评估 |
-
-第一阶段采用“静态 CPU 分区 + 单核 RT FIFO”。它并不承诺完整的多核全局实时调度：实时调度域只有编译期指定的一个物理核，因此无需跨 CPU RT push/pull、远程优先级抢占或 RT task 迁移。`pCPU0..2` 上的 vCPU 和 housekeeping task 仍是普通任务，不能通过提高优先级进入实时域。实时任务调用方不直接构造或保存 CPU mask，而是通过专用创建函数进入已经确定的 realtime domain。
-
-### 3.5 CPU 分区、启动和调度设计
-
-CPU 分区必须是系统唯一事实源，不能由 VM 配置、调度器、IRQ 和设备模块分别硬编码“最后一个核”。实时核由编译期配置指定，例如生成的构建配置项 `REALTIME_CPU_ID`：非负值表示物理逻辑 CPU ID，`-1` 表示禁用实时域。负数哨兵只允许存在于构建配置解析边界；进入 Rust 运行时后必须立即转换成 `Option<CpuId>`，不能让 `-1` 继续以裸整数参与 mask、索引或 IRQ affinity 计算。
-
-建议在 Axvisor/runtime 边界定义经过验证的分区对象：
-
-```rust
-pub struct CpuPartition {
-    virtualization: AxCpuMask,
-    realtime_cpu: Option<CpuId>,
-}
-```
-
-4 核 AMP 配置示例为：
-
-```text
-REALTIME_CPU_ID = 3
-
-online_cpu_mask         = 0b1111
-realtime_cpu            = Some(pCPU3)
-realtime_cpu_mask       = 0b1000  # 由 CPU ID 统一派生
-virtualization_cpu_mask = 0b0111  # online mask 扣除实时核后统一派生
-
-Starry vCPU0 -> 0b0001
-Starry vCPU1 -> 0b0010
-Starry vCPU2 -> 0b0100
-RT task      -> spawn_realtime(...) 自动选择 pCPU3
-```
-
-禁用配置为：
-
-```text
-REALTIME_CPU_ID = -1
-
-realtime_cpu            = None
-realtime_cpu_mask       = 0b0000
-virtualization_cpu_mask = online_cpu_mask
-spawn_realtime(...)     = Err(RealtimeDisabled)
-```
-
-构建脚本负责解析整数并生成常量，SMP 初始化阶段再用平台实际拓扑验证该 ID。启用实时域时，ID 必须位于 online CPU 集、不能超过构建期 CPU capacity，且第一阶段不能选择 BSP；禁用时必须恰好为 `-1`，其他负数均视为配置错误。非法配置应在启动 VM 或创建实时任务前失败，不能静默裁剪、改选最后一个核或回退到完整 CPU mask。验证成功后，由 `CpuPartition` 统一派生 virtualization mask、realtime mask、VM 可用 CPU 集和 IRQ affinity，其他模块不得再次解释原始整数配置。
-
-```mermaid
-flowchart TD
-    Build[编译期 REALTIME_CPU_ID] --> Boot[固件发现物理 CPU]
-    Boot --> Validate[解析为 Option CPU ID 并验证 CpuPartition]
-    Validate --> Disabled[-1: 不建立实时域]
-    Validate --> Virt[pCPU0..2 虚拟化域]
-    Validate --> RT[pCPU3 实时域]
-    Disabled --> AllHost[全部在线 CPU 属于普通 Axvisor]
-    Virt --> Host[Axvisor housekeeping]
-    Virt --> V0[Starry vCPU0]
-    Virt --> V1[Starry vCPU1]
-    Virt --> V2[Starry vCPU2]
-    RT --> RQ[单核 RtFifoScheduler]
-    RQ --> Control[8ms 控制任务]
-    RQ --> RtEvent[实时事件任务]
-```
-
-所有 secondary CPU 先完成 per-CPU area、trap vector、local interrupt controller 和 CPU-local timer 所需的最小初始化，再读取已经验证的 CPU ownership。普通 CPU 完成现有 Axvisor SMP、IPI、block runtime 和普通 scheduler 初始化；指定的实时 CPU 只建立受限 RT run queue、RT timer 和通信端点，不发布为普通任务可选 CPU。`REALTIME_CPU_ID=-1` 时不创建 RT run queue 或 RT worker，所有 online CPU 都沿用普通初始化路径。普通 runtime 的 ready 计数、IPI readiness、block hctx 扩展和 `available_parallelism()` 必须使用 virtualization domain，而不是未经分区的物理 CPU 总数。
-
-AxVM 已支持通过 `phys_cpu_sets` 给 vCPU task 设置 CPU mask。启用示例中的 CPU3 实时域时，VM 配置把 3 个 vCPU 分别固定到 `0b0001`、`0b0010` 和 `0b0100`，并在 `build_axvm_config()` 或等价的 placement 校验边界拒绝任何包含派生 realtime mask 的 vCPU 配置。`REALTIME_CPU_ID=-1` 时不施加实时域排除，VM placement 继续按现有在线 CPU 集校验。
-
-普通 Axvisor task 的默认 mask 必须取自 virtualization domain。实时任务只能通过类似以下专用入口创建：
-
-```rust
-pub fn spawn_realtime(
-    task: TaskInner,
-    priority: RtTaskPriority,
-) -> Result<AxTaskRef, SpawnRealtimeError>;
-```
-
-该函数从已经验证的 `CpuPartition` 读取唯一 realtime CPU，在任务第一次进入任何 run queue 前原子地完成单核 affinity、RT priority 和任务类别初始化，然后直接加入对应 RT run queue。调用方不接收 CPU ID 或 `AxCpuMask` 参数，也不需要知道实时核是哪一个。实时域未启用时返回 `SpawnRealtimeError::RealtimeDisabled`；配置与运行时拓扑不一致时在 SMP 初始化阶段已经失败，不能在创建任务时临时换核。普通 `spawn`/`spawn_task` 也不得通过后续 `set_cpumask()` 迁移到 realtime CPU。
-
-### 3.6 RT FIFO、优先级继承与实时任务约束
-
-针对 ArceOS 调度缺口，[#2161](https://github.com/rcore-os/tgoskits/pull/2161) 在 `components/axsched/src/rt_fifo.rs` 中新增 `RtFifoScheduler`。它通过 `RtPriority::rt_priority()` 获取任务有效优先级，并用 `(Reverse(priority), enqueue_order)` 维护 ready queue。这样高优先级任务总是先于低优先级任务被选中，同优先级任务仍保持 FIFO 入队顺序，符合实时 FIFO 的基本语义。
-
-`sched-rt-fifo` 通过 feature 接入 `axtask` 和 `ax-std`。当前实现限定在 `SMP=1`；本方案通过单核 realtime domain 保持这一约束，而不是把它解释为整个 Axvisor 只能使用一个 CPU。集成实现需要让 scheduler 选择成为 run queue/domain 属性，或者提供等价的受限 RT run queue，避免强迫 `pCPU0..2` 的普通任务也承担 RT FIFO 语义。若第一阶段为了缩小改动暂时让所有 run queue 使用同一 scheduler，则必须用 CPU partition 阻止 RT task 和普通 task 跨域，并把“按 domain 选择 scheduler”记录为后续收敛项。
-
-针对 mutex 优先级反转，[#2162](https://github.com/rcore-os/tgoskits/pull/2162) 在 #2161 的 RT FIFO 基础上为 `axtask` mutex 路径加入 priority inheritance。它区分基础优先级和捐赠优先级，使高优先级 waiter 阻塞时可以临时提升低优先级 owner 的 effective priority；owner unlock 后再清理或重算 donation，并通过 ready queue 重排让调度器观察到新的有效优先级。
-
-实时任务热路径还必须满足以下约束：
-
-- 启动阶段预分配 stack、队列、消息和统计区，进入周期循环后不调用全局 allocator。
-- 不访问文件系统，不执行同步串口打印，不调用 VM manager 或普通虚拟设备后端。
-- 不获取可能由 virtualization domain 持有的 sleepable lock；确需共享 mutex 时必须纳入 #2162 的 donation 链和锁顺序验证。
-- 不暴露 RT task 的 CPU mask 选择，不支持跨核迁移；实时任务创建入口自动使用编译期指定并经 SMP 初始化验证的唯一实时核。
-- 周期、deadline 和优先级使用类型化配置，优先级范围在入队前验证，不能把任意 `isize` 直接作为长期外部配置契约。
-
-### 3.7 IRQ、内存和设备所有权
-
-CPU 隔离只有与 IRQ 和设备隔离同时成立时才有实时意义。`pCPU3` 只允许接收 RT local timer、RT-owned device IRQ 和 host/RT doorbell；网卡、块设备、控制台、guest 虚拟设备后端和其他普通外部 IRQ 必须固定在 virtualization mask。IRQ affinity 通过 IRQ framework 的类型化 `IrqAffinity` 设置，不能在设备或 Axvisor 代码中用固定 GIC/PLIC/APIC 数字推导路由。
-
-RT-owned device 必须具有唯一 owner：普通设备 probe 不得同时绑定其 MMIO range 和 IRQ，启动失败时也不能静默退回普通 host driver。第一阶段可以只验证模拟 IRQ 或 local timer；真实 MPU6050、UART 或电机控制设备接入应作为独立阶段，补充设备 reset、enable、teardown 和错误恢复语义。
-
-RT stack、mailbox ring、统计区和控制状态应从启动时预留的固定内存池分配。共享 cache line 需要对齐，发布命令和结果使用 Release/Acquire；纯计数器只有在不承担同步语义时才可使用 Relaxed。静态绑核不能隔离 LLC、DRAM controller、interconnect、固件中断和电源管理，因此板卡测试前只能承诺软件调度与 IRQ 隔离，不能直接宣称严格硬实时。
-
-### 3.8 智能侧与实时侧通信
-
-StarryOS 与实时任务之间使用两条有界单向通道：`Starry -> RT command ring` 和 `RT -> Starry event ring`。每条通道采用单生产者、单消费者模型，具有固定容量、消息边界、序号、长度和状态字段；共享 ring 是数据事实源，doorbell 只表示“可能有新数据”。
-
-```mermaid
-sequenceDiagram
-    participant S as StarryOS
-    participant C as Command Ring
-    participant R as pCPU3 RT Task
-    participant E as Event Ring
-    S->>C: 发布控制目标/序号/时间戳
-    S->>R: doorbell
-    R->>C: 有界批量读取
-    R->>R: 执行 8ms 控制周期
-    R->>E: 发布状态/错误/deadline 统计
-    R->>S: virtual IRQ 或通知
-    S->>E: 读取完成结果
-```
-
-队列满、消息非法、序号跳变和对端未就绪必须产生明确结果或 drop/error 统计，不能无限自旋或静默覆盖。RT 侧不得在通知路径分配或等待普通 sleepable lock。优先复用 AxVM 已有 IVC/SPSC 协议与生命周期；只有其消息边界、映射或通知语义无法满足实时路径时，才新增窄的 RT mailbox capability，避免维护两套重复 ring 状态机。
-
-### 3.9 实施阶段与回滚边界
-
-| 阶段 | 交付内容 | 可观察验收 | 回滚方式 |
-| --- | --- | --- | --- |
-| 1 | 合入并修复 #2161 的 RT FIFO、测试发现和 CI 执行链 | scheduler 单元测试及单核 QEMU case 实际执行 | 关闭 `sched-rt-fifo` |
-| 2 | 增加编译期 `REALTIME_CPU_ID`、`CpuPartition`、SMP 拓扑验证和 vCPU placement 拒绝逻辑 | `3` 派生 CPU3 实时域；`-1` 保持全部 CPU 为普通域 | 配置为 `-1` |
-| 3 | 增加 `spawn_realtime()` 并建立指定核的受限 RT run queue，排除普通 task、IPI readiness 和 block hctx | 调用方无需 mask；RT 心跳只出现在指定核，VM/shell 正常 | 配置为 `-1` 后不创建 realtime domain |
-| 4 | 完成 IRQ affinity、RT timer、预分配内存和统计 | 非 RT IRQ 不进入指定实时核，timer/deadline 统计递增 | 禁用 RT IRQ route 和 executor |
-| 5 | 接入 command/event ring 与 doorbell | host/guest 能双向交换有序消息，满队列可观察 | 禁用 mailbox feature |
-| 6 | 合入 #2162 或等价 PI mutex，并接入真实控制任务/设备 | 优先级反转回归通过，8ms 控制闭环运行 | 回退到无共享 mutex 的静态控制路径 |
-
-每个阶段都必须保持默认配置可构建、可运行，不允许先合入闲置公共 API 或返回假成功的占位路径。改变 secondary CPU 启动顺序、CPU ownership、IRQ route 或推荐调试方法时，同步更新 `arch-platform-porting` 技能或其引用文档。
-
-### 3.10 验证矩阵与实时性口径
-
-| 风险或功能声明 | 验证层级 | 必须观察的结果 |
-| --- | --- | --- |
-| 编译期实时核配置正确 | 构建/单元测试 | `-1` 转换为 `None`；有效 ID 派生唯一 mask；其他负数、越界、离线或 BSP ID 被拒绝 |
-| 实时任务创建边界 | `axtask` 单元/集成测试 | `spawn_realtime()` 自动绑到指定核；禁用时返回 `RealtimeDisabled`；调用方无法传入 mask |
-| RT FIFO 语义 | `axsched` 单元测试 | 高优先级先运行、同优先级 FIFO、仅更高优先级触发 RT 抢占 |
-| 4 核启动分流 | Axvisor QEMU SMP4 | virtualization CPU host ready，指定 CPU RT ready，无 readiness 死等；`-1` 时 4 核均走普通路径 |
-| Starry vCPU 隔离 | Axvisor + StarryOS SMP3 | vCPU task 从未在指定实时核执行 |
-| housekeeping 隔离 | QEMU instrumentation/板卡统计 | 普通 task、block hctx、console worker 从未进入指定实时核 |
-| IRQ 隔离 | QEMU 模拟 IRQ/板卡 | 非 RT IRQ 计数在指定实时核始终为零 |
-| 通信正确性 | IVC/mailbox 集成测试 | 顺序、边界、满队列、重启和超时行为确定 |
-| PI mutex | 确定性三任务回归 | 中优先级任务不能长期间接阻塞高优先级 waiter |
-| 8ms 控制闭环 | RK3588 压力测试 | 报告最大 wake-up latency、最大 jitter、WCET 和 deadline miss，而非只报平均值 |
-
-实时性结果必须记录硬件型号、CPU 频率策略、测试时长、样本数、StarryOS 压力负载、IRQ 配置和统计方法。平均值只能说明常见开销，不能替代最大值、分位数和 deadline miss。建议至少分别测试空载、guest CPU 压力、网络压力、存储压力和组合压力，并以 bare RTOS、RTOS guest 和 AMP 三条路径使用同一测量定义进行对照。
+#### 3.2.3 PR 与验证证据
 
 | PR | 解决的问题 | 关键机制 | 验证重点 |
 | --- | --- | --- | --- |
-| [#2160](https://github.com/rcore-os/tgoskits/pull/2160) | Axvisor 层缺少 CPU 所有权边界 | CPU owner、secondary 分流、VM placement 与资源排除设计 | 本方案复用其分区原则，但 RT CPU 保留受限 `axtask` 调度域 |
-| [#2161](https://github.com/rcore-os/tgoskits/pull/2161) | 默认 FIFO 不支持 RT 优先级 | `RtFifoScheduler` 按有效优先级和 FIFO 顺序选任务 | 高优先级先运行、同优先级 FIFO、tick 抢占判定 |
-| [#2162](https://github.com/rcore-os/tgoskits/pull/2162) | mutex 未使用优先级，存在优先级反转 | base/donated/effective priority，owner donation，ready queue 重排 | 高优先级 waiter 不被中优先级任务长期间接阻塞 |
-| [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | AArch64/RK3588 缺少可复现的 AMP 集成入口 | 编译期实时核选择、自动绑核的实时任务 API、Starry + host AMP 和 OrangePi 5 Plus 配置 | QEMU 同时出现 guest ready 与 host RT 结果；RK3588 板级配置可构建运行 |
+| [#2160](https://github.com/rcore-os/tgoskits/pull/2160) | Axvisor 缺少实时 CPU 所有权边界 | CPU owner、secondary CPU 启动分流、VM placement 和资源排除 | 实时核不承载 guest vCPU 和普通 runtime |
+| [#2161](https://github.com/rcore-os/tgoskits/pull/2161) | 默认 FIFO 不表达实时优先级 | `RtFifoScheduler` 按有效优先级和 FIFO 顺序选择任务 | 高优先级先运行、同优先级 FIFO、tick 抢占 |
+| [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | AArch64/RK3588 缺少可复现的 AMP 入口 | 编译期实时核、`spawn_realtime()`、Starry + host AMP、OrangePi 5 Plus 配置 | guest ready 与 host RT 结果必须同时出现 |
 
-三项改动并非无需适配即可直接叠加：#2160 当前独立 RT executor 方向与 #2161/#2162 的 `axtask` 依赖存在架构差异。本方案选择以 #2161 为第一阶段调度基础，复用 #2160 的 CPU 所有权和隔离原则，将 realtime CPU 改造成受限单核 `axtask` domain，再接入 #2162 的有效优先级和 donation。这样才能形成“CPU 分区、RT 调度、锁等待、IRQ 隔离和有界通信”一致的完整链路，并支撑任务三中双轮足机器人 8ms 平衡闭环。
+AArch64 联合用例使用 `qemu-system-aarch64`、`cortex-a72` 和 `aarch64-unknown-none-softfloat`。Starry guest FDT 保留 `/chosen`、`/aliases`，GICD/GICR 使用 partial passthrough，模拟 MMIO 从 stage-2 passthrough 自动打孔；NVMe guest RAM 使用 `MAP_RESERVED` 恒等映射以满足 DMA。
 
-### 3.11 当前实现与 AArch64 QEMU 证据
+```bash
+cargo xtask starry build \
+  --config test-suit/axvisor/guest-build/starry-aarch64-amp.toml --smp 1
+cargo xtask axvisor test qemu \
+  --arch aarch64 -g normal -c qemu-amp/starry-host-amp
+```
 
-已实现版本的构建入口是 `test-suit/axvisor/guest-build/starry-aarch64-amp.toml`，其中通过 `realtime_cpu_id = 3` 在编译期选择实时核；配置为 `-1` 时不创建实时域。Starry 联合用例使用 `qemu-system-aarch64` 的 `cortex-a72` 和 `aarch64-unknown-none-softfloat` 目标，guest FDT 保留 `/chosen`、`/aliases`，GICD/GICR 采用 partial passthrough，并对模拟 MMIO 自动打孔。NVMe DMA 使用 `MAP_RESERVED` 恒等映射的 guest RAM，避免 `MAP_ALLOC` 仅有 CPU 映射的问题。
-
-实时任务通过 `spawn_realtime(...)` 创建，入口内部完成 affinity、优先级和首次入队前的任务元数据初始化；调用方不传 CPU ID 或 mask。benchmark 输出统计后保持驻留，专用核不会因任务退出而落回普通调度路径。
-
-联合用例实际输出：
+联合成功表达式要求同时观察到：
 
 ```text
 STARRY_AMP_GUEST_READY
 AMP_RT_RESULT source=host samples=1000 period_us=1000 p50_us=0 p99_us=0 max_us=14 missed=0
 ```
 
-复现命令：
+### 3.3 实时域的 PI mutex 能力
 
-```bash
-cargo xtask starry build --config test-suit/axvisor/guest-build/starry-aarch64-amp.toml --smp 1
-cargo xtask axvisor test qemu --arch aarch64 -g normal -c qemu-amp/starry-host-amp
+#### 3.3.1 问题与确定性复现
+
+RT FIFO 只能决定 ready task 的运行顺序，无法处理已经因 mutex 阻塞的任务。原有 sleepable mutex 只记录 owner 和 wait queue：高优先级任务等待低优先级 owner 时，不会改变 owner 的调度优先级。若中优先级任务持续保持 runnable，低优先级 owner 无法运行到 unlock，高优先级任务也就无法继续。
+
+```text
+L（低优先级）获取 mutex
+    -> H（高优先级）尝试获取并阻塞
+    -> M（中优先级）持续运行
+    -> L 无法获得 CPU，不能释放 mutex
+    -> H 长时间等待
 ```
 
-该结果只证明 QEMU 下的启动、placement、调度与 DMA 契约；真实板卡仍需补测设备 IRQ 归属、缓存/内存总线竞争、电源管理中断和长时间 deadline miss。
+这是无界优先级反转，不是由循环锁依赖产生的传统死锁。在手工测试中，如果 M 持续计算且不阻塞，H 会永久等待，外观上表现为实时核“死锁”。文档和日志应分别记录 mutex owner、H 的等待状态和 M 的运行状态，避免把根因误判为锁循环。
 
-RK3588/OrangePi 5 Plus 的运行构建已补充到
-`test-suit/axvisor/normal/board-orangepi-5-plus/starry-host-amp/`。该配置在
-编译期固定 `realtime_cpu_id = 3`，启用 Rockchip SDHCI/MMC 驱动并复用现有
-Starry SMP1 VM。板卡运行使用 `cargo xtask axvisor test board
---board orangepi-5-plus-starry-host-amp`，需要先取得 OrangePi-5-Plus 板卡租约并按
-板卡指南准备 Linux rootfs 和 guest 资源；在实板完成压力测试前，不把 QEMU 的
-`AMP_RT_RESULT` 数值当作 RK3588 的实时性结论。
+[#2162](https://github.com/rcore-os/tgoskits/pull/2162) 的 QEMU 用例构造低优先级 owner、高优先级 waiter 和中优先级干扰任务。主任务通过原子标志控制 staging，确保 L 先持锁、H 再进入等待、M 同时保持 ready，使问题能够确定性复现，而不是依赖随机调度时序。
+
+#### 3.3.2 PI mutex 实现
+
+PI mutex 将任务优先级拆分为基础优先级和有效优先级。H 阻塞时把自己的有效优先级捐赠给 L；若 L 位于 ready queue，则 run queue 将它移除并按新优先级重新入队。L 因此能够抢占 M、完成临界区并释放 mutex；unlock 后 donation 被清理，L 恢复基础优先级。
+
+```text
+H 等待 L
+    -> H 向 L donation
+    -> effective_priority(L) = priority(H)
+    -> L 抢占 M 并释放 mutex
+    -> H 获得 mutex
+    -> L 恢复 base_priority
+```
+
+实现还覆盖：
+
+- `try_lock()` 失败不产生 donation；
+- 多个 waiter 时使用最高 waiter 优先级；
+- A 等 B、B 等 C 时沿 owner 等待链传播 donation；
+- ready task 的有效优先级改变后立即重排；
+- lockdep bridge 与普通 mutex 路径保持一致。
+
+当前实现是单核 RT FIFO 下的最小 PI 闭环，并未声明完整 POSIX `PTHREAD_PRIO_INHERIT` 语义。多 mutex owner 的 donation 重算、priority-aware wait queue 和 SMP 跨核实时调度仍属于后续工作。
+
+#### 3.3.3 测试效果
+
+| 测试场景 | 无 PI 的失败形态 | 启用 PI 后的通过条件 |
+| --- | --- | --- |
+| L/H/M 基础反转 | M 长期压制 L，H 无法获得 mutex | L 继承 H 优先级并先于 M 运行，H 完成 |
+| unlock 清理 | 无 donation 状态可验证 | L 的有效优先级恢复为基础值 0 |
+| `try_lock()` | 不适用 | 失败不提升 owner |
+| 两个 waiter | owner 无法反映最高实时需求 | 最高 waiter 的 donation 生效 |
+| A→B→C 链式等待 | 高优先级需求无法传到 C | donation 传播到 C，A 最终完成 |
+
+验证命令：
+
+```bash
+cargo xtask arceos test qemu \
+  --test-group rust --test-case sched-rt-fifo \
+  --target x86_64-unknown-none
+```
+
+通过日志应包含：
+
+```text
+sched-rt-fifo mutex priority inheritance OK
+sched-rt-fifo mutex donation cleanup OK
+sched-rt-fifo mutex try_lock no-donation OK
+sched-rt-fifo mutex highest-waiter donation OK
+sched-rt-fifo mutex ABC chain donation OK
+ArceOS test suite run OK!
+```
+
+### 3.4 spin-noirq 滥用检测与锁类型治理
+
+#### 3.4.1 问题与影响链
+
+`SpinNoIrq` 在获取锁时保存并关闭本地中断，适用于确实与 IRQ handler 共享且极短、不可睡眠的临界区。若普通任务路径在锁内执行长循环、复杂计算、同步日志、内存分配或设备等待，本地 timer 即使已经到期也不能进入中断处理。timer 驱动的定时唤醒和 scheduler 抢占请求会一起推迟，所以 RT FIFO 的优先级语义无法弥补长时间关中断。
+
+![spin-noirq 长持锁对实时调度的影响链](assets/spin-noirq-timer-impact.svg)
+
+影响链可以概括为：
+
+```text
+长时间持有 spin-noirq
+    -> 本地 IRQ 关闭
+    -> per-CPU timer 到期但无法响应
+    -> 定时唤醒和 reschedule 请求推迟
+    -> 高优先级任务无法及时抢占
+    -> jitter 与 deadline miss 增加
+```
+
+#### 3.4.2 滥用检测能力
+
+检测分为静态审计和运行时计时两层。静态审计枚举所有 `SpinNoIrq` 使用点，检查临界区是否真的与 IRQ 上下文共享，以及是否包含 loop、日志、分配、等待或不可界定的调用。运行时检测在 irq-save guard 获取和释放边界记录 per-CPU 时间戳、锁地址、调用位置和嵌套深度，释放时计算关中断时长。
+
+超过阈值时输出：
+
+```text
+SPIN_NOIRQ_LONG_HOLD cpu=3 lock=... duration_ns=... threshold_ns=...
+SPIN_NOIRQ_MAX cpu=3 max_ns=... violations=...
+```
+
+检测实现必须满足以下约束：
+
+- 使用 per-CPU 预分配统计，不在关中断路径分配内存；
+- 告警输出延迟到恢复中断后，避免同步串口进一步拉长临界区；
+- 处理嵌套 irq-save，只由最外层 guard 统计完整关中断窗口；
+- 以调试 feature 开启，不改变默认发行配置的热路径；
+- 同时记录最大值和超限次数，不能只打印单次告警。
+
+#### 3.4.3 故障注入与 timer 观测
+
+选择一个仅由任务上下文访问、但当前使用 `SpinNoIrq` 的真实路径，让实时域任务高频进入。测试版本在持锁区加入固定次数、不可被编译器优化掉的 loop，逐步放大临界区；per-CPU timer 同时记录期望 deadline 和实际 IRQ 入口时间。
+
+建议的确定性 marker：
+
+```text
+SPIN_NOIRQ_TEST_ENTER cpu=3 loops=...
+SPIN_NOIRQ_LONG_HOLD cpu=3 duration_ns=...
+RT_TIMER_LATE cpu=3 latency_ns=...
+RT_HIGH_PRIORITY_WAKE_LATE latency_ns=...
+```
+
+A/B 测试保持 CPU、频率、循环次数、timer 周期和任务优先级完全一致：
+
+| 版本 | 观测重点 | 预期结果 |
+| --- | --- | --- |
+| `SpinNoIrq` + 锁内 loop | 关中断时长、timer latency、高优先级唤醒 | timer IRQ 推迟到 unlock 后，高优先级抢占同步推迟 |
+| 普通 mutex | timer latency、高优先级唤醒 | waiter 睡眠但 IRQ 保持开启，高优先级任务按 deadline 唤醒并抢占 |
+| 缩短后的必要 irq-safe 临界区 | 最大关中断时长 | 只保留不可睡眠的状态发布，低于阈值 |
+
+这一实验需要同时记录 timer 延迟和高优先级任务实际开始运行时间。只证明 timer IRQ 延迟还不足以证明调度受影响；只有二者随关中断窗口同步增长，才能建立“spin-noirq 滥用拖累高优先级抢占”的证据链。
+
+#### 3.4.4 替换原则与验收边界
+
+如果被保护资源只在任务上下文访问，应使用可睡眠 mutex；低优先级 owner 被高优先级任务等待时，由 3.3 的 PI 机制处理优先级反转。若资源确实由 IRQ handler 与任务共享，则不能机械替换为 mutex，而应把慢路径移到锁外，只在短 irq-safe 临界区内完成状态读取或发布。
+
+| 指标 | 修复前 | 修复后验收 |
+| --- | --- | --- |
+| 最大关中断时间 | 随锁内 loop 增长 | 低于设定阈值 |
+| per-CPU timer 最大响应延迟 | 推迟到 spin unlock 后 | 不随任务锁等待显著增长 |
+| 高优先级任务抢占 | 推迟或产生 deadline miss | 在预期唤醒窗口内发生 |
+| 检测告警 | 出现 `SPIN_NOIRQ_LONG_HOLD` | 目标路径无超限告警 |
+| 功能正确性 | 原路径功能正常 | mutex/拆锁后功能和并发语义保持一致 |
+
+目前仓库已有 `SpinNoIrq` 使用点和个别改用睡眠 mutex 的历史，但尚未形成上述长持锁检测 PR、故障注入日志和修复前后定量结果。因此本节定义的是下一阶段的实现与验收合同；完成后必须补充 PR 链接、具体锁路径、阈值依据、原始日志和 A/B 数据，不能仅以代码替换或一次启动成功作为结论。
+
+### 3.5 综合验证与适用边界
+
+| 验证对象 | 测试层级 | 必须观察的结果 |
+| --- | --- | --- |
+| 编译期实时核 | 构建/启动 | `-1` 禁用；有效 ID 建立唯一实时域；越界、离线或 BSP 被拒绝 |
+| task/vCPU 隔离 | Axvisor QEMU SMP4 | 实时任务只在指定核，vCPU 与普通 task 不进入实时核 |
+| RT FIFO | scheduler 单元/QEMU | 高优先级先运行、同优先级 FIFO、timer 可触发抢占 |
+| PI mutex | 单核三任务回归 | H 完成、L donation 后恢复、M 不能长期压制 L |
+| spin-noirq | 故障注入 A/B | 长持锁与 timer/抢占延迟相关，换锁或拆锁后恢复 |
+| guest 共存 | Starry + host AMP | guest ready 和 host RT result 同时出现 |
+| RK3588 压力 | 真机 | 空载及 guest CPU/网络/存储压力下记录 P99、最大值和 deadline miss |
+
+实时性报告必须固定硬件型号、CPU 频率策略、测试时长、样本数、guest 压力、IRQ affinity 和统计方法。平均值只能描述常见开销，不能替代最大值、分位数和 deadline miss。QEMU 用于验证启动、调度和隔离契约；RK3588 实板数据用于评估真实 timer、GIC、缓存和内存系统干扰。
 
 ## 4. 任务二：客户机通信与协议设计
 
