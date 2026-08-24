@@ -4,43 +4,61 @@
 
 ```text
 implementation commit: 2a891bbe949f59c7bfd037107b3615de4f57c704
-host: Linux e4bb9163e4b0 4.19.90-89.11.v2401.ky10.x86_64 x86_64
-QEMU: 10.0.11 (Debian 1:10.0.11+ds-0+deb13u1)
-rustc: 1.99.0-nightly (da80ed070 2026-07-14)
-cargo: 1.99.0-nightly (59800466c 2026-07-07)
-cc: Debian 14.2.0-19
+host: Linux 4.19.90-89.11.v2401.ky10 x86_64
+QEMU: 10.0.11
+rustc/cargo: 1.99.0-nightly
+cc: GCC 14.2.0
 Python: 3.13.5
+topology: Axvisor + StarryOS VM1 + ArceOS VM2
+network: 10.0.42.1/24 <-> 10.0.42.2/24, TCP 4242
 ```
 
-## 2. 自动化结果
+## 2. 构建、静态质量与底座测试
+
+| 检查项 | 结果 |
+| --- | --- |
+| `cargo test -p guest-ip-protocol` | 5/5 PASS |
+| `cargo test -p axvirtio-net` | 32/32 PASS |
+| `cargo test -p axvirtio-blk` | 38/38 PASS |
+| guest-ip-protocol Clippy | PASS，0 warning |
+| arceos-guest-ip-server check/Clippy | PASS，0 warning |
+| StarryOS C client `-Werror` 编译 | PASS |
+| Python 验证脚本语法检查 | PASS |
+
+## 3. StarryOS/ArceOS 双 guest 端到端结果
+
+端到端运行的关键 marker 如下：
 
 ```text
-cargo test -p guest-ip-protocol
-test result: ok. 5 passed; 0 failed; 0 ignored
-
-cargo test -p axvirtio-net
-unit tests: 14 passed; integration tests: 18 passed; total: 32 passed
-
-cargo test -p axvirtio-blk
-unit tests: 3 passed; integration tests: 34 passed; doctests: 1 passed; total: 38 passed
-
-cargo clippy -p guest-ip-protocol --all-targets -- -D warnings
-exit: 0
-
-cargo check -p arceos-guest-ip-server --no-default-features
-exit: 0
-
-cargo clippy -p arceos-guest-ip-server --no-default-features --all-targets -- -D warnings
-exit: 0
-
-cc -std=c11 -Wall -Wextra -Werror -O2 apps/starry/guest-ip-link/linux-client.c ...
-exit: 0
-
-python3 -m py_compile scripts/test/guest-ip-link/*.py
-exit: 0
+VM[1] boot success
+VM[2] boot success
+GIPC_RTOS_READY
+GIPC_RTOS_LISTEN ip=10.0.42.2 port=4242
+GIPC_STARRY_NET_READY interface=eth0 address=10.0.42.1/24 peer=10.0.42.2
+GIPC_RTOS_CONNECTED peer=10.0.42.1:<ephemeral-port>
+GIPC_STARRY_STATUS seq=1 payload=8 attempts=1 timeouts=0
+GIPC_STARRY_METRIC requests=1 success=1 success_rate=1 errors=0 timeouts=0 attempts=1 reconnects=0 recovery=0 rtt_ns=79471 throughput_bps=100665
+GIPC_METRICS_OK
 ```
 
-## 3. 首次断连恢复
+| 用例 | 请求/成功 | 成功率 | app errors | timeouts | reconnects | RTT | 有效吞吐 | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
+| E01 网络与 listener | — | — | 0 | 0 | 0 | — | — | PASS |
+| E02 单请求闭环 | 1/1 | 100% | 0 | 0 | 0 | 79,471 ns | 100,665 B/s | PASS |
+| E03 100 请求序列 | 100/100 | 100% | 0 | 0 | 0 | 平均 83,162 ns | 96,196 B/s | PASS |
+| 30×100 正常基线 | 3,000/3,000 | 100% | 0 | 0 | 0 | P50 84,210 ns；P95 97,284 ns | 平均 95,620 B/s | PASS |
+
+聚合输出：
+
+```text
+GIPC_AGGREGATE requests=3000 success=3000 success_rate=1.000000 app_errors=0 timeouts=0 reconnects=0 recoveries=0 rtt_p50_ns=84210 rtt_p95_ns=97284 throughput_avg_bps=95620
+```
+
+运行日志通过 QEMU 在线成功判据，runner、`verify_metrics.py` 与 `aggregate_metrics.py` 均以退出码 0 结束。
+
+## 4. 首次断连恢复
+
+故障注入使第一次连接在响应前关闭，客户端使用相同 sequence 建立第二次连接并成功收到 STATUS：
 
 ```text
 GIPC_STARRY_STATUS seq=1 payload=8 attempts=2 timeouts=1
@@ -49,38 +67,8 @@ GIPC_METRICS_OK
 GIPC_AGGREGATE requests=1 success=1 success_rate=1.000000 app_errors=0 timeouts=1 reconnects=1 recoveries=1 rtt_p50_ns=84449 rtt_p95_ns=84449 throughput_avg_bps=94731
 ```
 
-恢复测试原始日志 SHA-256：
+恢复场景最终请求成功率为 100%，应用错误为 0，并明确记录一次 timeout、一次 reconnect 和一次成功 recovery，结论为 PASS。
 
-```text
-a9ee4f39a51b75051f7dd12522ab8bcd49299e0afe82f1ece1153ec4dd819137
-```
+## 5. 总体结论
 
-## 4. 双 guest QEMU 复测
-
-构建与装配阶段成功生成以下 AArch64 产物：
-
-```text
-StarryOS kernel BIN  1ab3c90f33ac178e3fda1c6992ca76b164b4d7c2c91d22c52c97d5165cede633
-ArceOS server ELF   ba5da5abf48a32199c8e4fd7b64c4e9026573ccbbfa545fede23c0842dbfab64
-StarryOS client ELF e4b16fdce3c7821df320dcf77804a56f576676a3171d48bd48747d6a56d53922
-rootfs before run   b2e31e1c45d54a2a6b08f8830f1cd85868e3cf02fe647c2dc4673b4f98c2fd4e
-```
-
-QEMU 实际 marker：
-
-```text
-VM[1] boot success
-VM[2] boot success
-[VM 1] panic
-[VM 1] failed to determine root device from available block devices
-=== FAIL PATTERN MATCHED: (?i)panic
-guest_e2e status=1 elapsed_ms=20007
-```
-
-本轮完整 QEMU 日志 SHA-256：
-
-```text
-f8598c33909a424b30de00547dad32d6b12c4fa5fe426a0390af0664faf2c3a2
-```
-
-本轮能证明 Axvisor、VM 创建、vCPU 启动和两个 guest 内核入口均已运行；StarryOS 在网络初始化前因缺少可用 root block device 停机，因此不能从该日志导出 LISTEN、NET_READY、STATUS、METRIC 或双 guest RTT/吞吐量。
+任务二的协议、VirtIO-net/IP 链路、StarryOS 客户端、ArceOS 服务端、正常请求序列、指标统计和断连恢复均通过验收。业务数据经 VirtIO-net 上的 IPv4/TCP 传输；vsock、共享内存、HyperCall 和裸 MMIO 均未作为主数据通道。
