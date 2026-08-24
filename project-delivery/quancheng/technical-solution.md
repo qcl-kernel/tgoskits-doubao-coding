@@ -197,13 +197,7 @@ AMP_RT_RESULT source=host samples=1000 period_us=1000 p50_us=0 p99_us=0 max_us=1
 
 RT FIFO 只能决定 ready task 的运行顺序，无法处理已经因 mutex 阻塞的任务。原有 sleepable mutex 只记录 owner 和 wait queue：高优先级任务等待低优先级 owner 时，不会改变 owner 的调度优先级。若中优先级任务持续保持 runnable，低优先级 owner 无法运行到 unlock，高优先级任务也就无法继续。
 
-```text
-L（低优先级）获取 mutex
-    -> H（高优先级）尝试获取并阻塞
-    -> M（中优先级）持续运行
-    -> L 无法获得 CPU，不能释放 mutex
-    -> H 长时间等待
-```
+![无 PI mutex 时的确定性优先级反转](assets/pi-mutex-priority-inversion.svg)
 
 这是无界优先级反转，不是由循环锁依赖产生的传统死锁。在手工测试中，如果 M 持续计算且不阻塞，H 会永久等待，外观上表现为实时核“死锁”。文档和日志应分别记录 mutex owner、H 的等待状态和 M 的运行状态，避免把根因误判为锁循环。
 
