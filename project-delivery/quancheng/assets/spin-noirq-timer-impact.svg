@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="360" viewBox="0 0 1120 360" role="img" aria-labelledby="title desc">
+  <title id="title">spin-noirq 长持锁对实时调度的影响链</title>
+  <desc id="desc">长时间关闭本地中断会推迟 per-CPU timer、任务唤醒和高优先级抢占，最终增加抖动与 deadline miss。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title { font: 700 24px sans-serif; fill: #0f172a; }
+      .label { font: 600 16px sans-serif; fill: #0f172a; }
+      .note { font: 14px sans-serif; fill: #475569; }
+      .box { stroke-width: 2; rx: 14; ry: 14; }
+      .arrow { stroke: #64748b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1120" height="360" fill="#f8fafc"/>
+  <text x="560" y="42" text-anchor="middle" class="title">spin-noirq 长持锁如何拖累实时抢占</text>
+
+  <rect x="30" y="105" width="180" height="105" class="box" fill="#fee2e2" stroke="#ef4444"/>
+  <text x="120" y="140" text-anchor="middle" class="label">锁内慢路径</text>
+  <text x="120" y="168" text-anchor="middle" class="note">loop / 日志 / 等待</text>
+  <text x="120" y="190" text-anchor="middle" class="note">持有 SpinNoIrq</text>
+
+  <path d="M210 157 H255" class="arrow"/>
+  <rect x="260" y="105" width="180" height="105" class="box" fill="#ffedd5" stroke="#f97316"/>
+  <text x="350" y="140" text-anchor="middle" class="label">本地 IRQ 关闭</text>
+  <text x="350" y="168" text-anchor="middle" class="note">timer 已到期</text>
+  <text x="350" y="190" text-anchor="middle" class="note">但无法进入 handler</text>
+
+  <path d="M440 157 H485" class="arrow"/>
+  <rect x="490" y="105" width="180" height="105" class="box" fill="#fef3c7" stroke="#eab308"/>
+  <text x="580" y="140" text-anchor="middle" class="label">timer 响应推迟</text>
+  <text x="580" y="168" text-anchor="middle" class="note">per-CPU deadline</text>
+  <text x="580" y="190" text-anchor="middle" class="note">只能在 unlock 后处理</text>
+
+  <path d="M670 157 H715" class="arrow"/>
+  <rect x="720" y="105" width="180" height="105" class="box" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="810" y="140" text-anchor="middle" class="label">唤醒/抢占推迟</text>
+  <text x="810" y="168" text-anchor="middle" class="note">高优先级任务 ready</text>
+  <text x="810" y="190" text-anchor="middle" class="note">但调度点尚未到达</text>
+
+  <path d="M900 157 H945" class="arrow"/>
+  <rect x="950" y="105" width="140" height="105" class="box" fill="#ede9fe" stroke="#8b5cf6"/>
+  <text x="1020" y="140" text-anchor="middle" class="label">实时性退化</text>
+  <text x="1020" y="168" text-anchor="middle" class="note">jitter 增加</text>
+  <text x="1020" y="190" text-anchor="middle" class="note">deadline miss</text>
+
+  <path d="M350 225 V280 H810 V225" stroke="#16a34a" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="445" y="260" width="270" height="58" class="box" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="580" y="286" text-anchor="middle" class="label">治理：睡眠 mutex 或拆分慢路径</text>
+  <text x="580" y="307" text-anchor="middle" class="note">保持 IRQ 可响应，由 PI 处理任务间锁等待</text>
+</svg>
