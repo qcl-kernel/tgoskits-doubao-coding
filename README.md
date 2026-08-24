@@ -1,111 +1,42 @@
-<h1 align="center">TGOSKits</h1>
+# 泉城比赛项目交付材料
 
-<p align="center">An integrated Rust workspace for operating system and virtualization development</p>
+本目录用于集中存放“智能化工控中基于虚拟化的混合系统部署及联动实现”项目的比赛提交材料。材料围绕三项任务组织，但不做简单平铺，而是统一采用“底座 -> 链路 -> 应用”的叙事结构：
 
-<div align="center">
+- 任务一：Axvisor 实时性与隔离底座，优化 Axvisor 自身的实时运行能力，为智能侧 guest 与预留实时 CPU 上的控制任务提供隔离保障。
+- 任务二：客户机通信底座，在隔离客户机之间建立可复现、可测试的 IP 通信和应用层协议链路。
+- 任务三：AI 联动应用，在前两项基础上完成 StarryOS 智能侧推理、Axvisor 实时侧控制和状态回传的闭环展示。
 
-[![Build & Test](https://github.com/rcore-os/tgoskits/actions/workflows/ci.yml/badge.svg)](https://github.com/rcore-os/tgoskits/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/edition-2024-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+## 材料清单
 
-</div>
+| 文件 | 用途 |
+| --- | --- |
+| [technical-solution.md](project-delivery/quancheng/technical-solution.md) | 设计方案正文，说明总体架构、三任务设计和部署复现关系。 |
+| [test-plan.md](project-delivery/quancheng/test-plan.md) | 测试验收框架，覆盖启动、隔离、通信、性能、AI 联动和综合指标记录。 |
+| [pr-summary.md](project-delivery/quancheng/pr-summary.md) | 参赛 PR 清单，用于整理各 PR 与三项任务之间的对应关系。 |
+| [assets/task3-ai-control.svg](project-delivery/quancheng/assets/task3-ai-control.svg) | 任务三 AI 语音识别到 Axvisor 实时控制闭环架构图。 |
+| [assets/task3-code-architecture.svg](project-delivery/quancheng/assets/task3-code-architecture.svg) | 任务三 StarryOS 应用、Axvisor 通道和实时控制任务的代码模块架构图。 |
+| [assets/task3-rt-loop.svg](project-delivery/quancheng/assets/task3-rt-loop.svg) | Axvisor 预留实时 CPU 上 8ms 双轮足控制循环流程图。 |
+| [assets/control_voice.wav](project-delivery/quancheng/assets/control_voice.wav) | 双轮足机器人语音控制输入样例，用于任务三 AI 联动演示。 |
+| [assets/video.mp4](project-delivery/quancheng/assets/video.mp4) | 双轮足机器人端到端实物演示视频。 |
+| [assets/minicom_output.jpg](project-delivery/quancheng/assets/minicom_output.jpg) | 开发板启动 Axvisor/客户机/实时任务的串口输出截图。 |
 
-English | [中文](README_CN.md)
+## 材料关系
 
-## 1. Introduction
+三份材料之间的关系如下：
 
-TGOSKits is an integrated repository for operating system and virtualization development. It brings together ArceOS, StarryOS, Axvisor, shared components, platform crates, and driver infrastructure in one workspace. A unified `cargo xtask` entry point is used for build, run, debug, and test workflows, making the repository suitable for component development, cross-system integration, and system-level validation.
+1. `project-delivery/quancheng/technical-solution.md` 描述总体方案和三任务依赖关系。
+2. `project-delivery/quancheng/test-plan.md` 描述测试维度、记录字段和综合指标。
+3. `project-delivery/quancheng/pr-summary.md` 汇总参赛 PR，并将 PR 映射到任务一、任务二、任务三。
 
-Project site: [https://rcore-os.cn/tgoskits/](https://rcore-os.cn/tgoskits/). To understand the project scope and system relationships, start from the [TGOSKits documentation](https://rcore-os.cn/tgoskits/docs/introduction).
+## 与仓库代码的关系
 
-## 2. Repository
+TGOSKits 仓库提供 ArceOS、StarryOS、Axvisor 及相关组件的统一开发与测试入口。本项目交付材料引用的主要代码与配置位置包括：
 
-TGOSKits brings multiple standalone subprojects into the root repository through Git Subtree and provides unified entry points for building, running, testing, and documentation. The main directories are:
-
-```text
-tgoskits/
-├── components/                # reusable component crates
-├── os/
-│   ├── arceos/                # ArceOS modular kernel
-│   ├── StarryOS/              # StarryOS Linux-compatible OS
-│   └── axvisor/               # Axvisor Type-I Hypervisor
-├── platform/                  # platform and board support crates
-├── drivers/                   # reusable drivers and driver subsystems
-├── test-suit/                 # system-level test cases
-├── xtask/                     # unified root command entry
-├── scripts/                   # repository maintenance, test, and sync scripts
-└── docs/                      # Docusaurus documentation site
-```
-
-For subtree synchronization, component layering, and development conventions, see [repository structure and collaboration](https://rcore-os.cn/tgoskits/docs/contributing/repo) and the [architecture overview](https://rcore-os.cn/tgoskits/docs/architecture/overview).
-
-## 3. Quick Experience
-
-### 3.1 Environment Setup
-
-For a first run, the recommended path is to use the project container image. It already includes the Rust toolchain, QEMU, and common cross-compilation dependencies, matching the CI environment:
-
-```bash
-git clone https://github.com/rcore-os/tgoskits.git
-cd tgoskits
-
-docker pull ghcr.io/rcore-os/tgoskits-container:latest
-docker run -it --rm \
-  -v "$(pwd)":/workspace \
-  -w /workspace \
-  ghcr.io/rcore-os/tgoskits-container:latest
-```
-
-If you do not use the container, prepare at least Rust, basic build tools, and common QEMU packages. The recommended QEMU version is 10.2.1, matching the container and CI environment; distribution packages are usually enough for quick trials, but switch to the container if a target is missing or behavior differs:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-sudo apt update
-sudo apt install -y cmake make ninja-build pkg-config e2fsprogs fakeroot
-sudo apt install -y qemu-system-arm qemu-system-riscv64 qemu-system-x86
-cargo install cargo-binutils
-```
-
-See [quick start overview](https://rcore-os.cn/tgoskits/docs/quickstart/overview) and [CI and container images](https://rcore-os.cn/tgoskits/docs/build/ci) for the full environment guide.
-
-### 3.2 QEMU Verification
-
-First confirm that common QEMU commands are available, preferably matching QEMU 10.2.1 from the container and CI environment:
-
-```bash
-qemu-system-riscv64 --version
-qemu-system-aarch64 --version
-qemu-system-x86_64 --version
-qemu-system-loongarch64 --version
-```
-
-Then use the unified `cargo xtask` entry point to run the three system paths:
-
-```bash
-# ArceOS: run the default Hello World
-cargo xtask arceos qemu --arch aarch64
-
-# StarryOS: prepare rootfs before the first run
-cargo xtask starry rootfs --arch aarch64
-cargo xtask starry qemu --arch aarch64
-
-# Axvisor: run a Hypervisor QEMU scenario
-cargo xtask axvisor qemu --arch aarch64
-```
-
-If you only want the shortest path to a successful run, start with the default ArceOS Hello World app. Pass `--package arceos-shell` when you specifically need the interactive Shell. For more systems, architecture combinations, and QEMU options, see the [quick start overview](https://rcore-os.cn/tgoskits/docs/quickstart/overview) and [run and QEMU](https://rcore-os.cn/tgoskits/docs/build/run).
-
-## 4. Contributing
-
-Issues and pull requests are welcome. A typical workflow is:
-
-1. Read [repository structure and collaboration](https://rcore-os.cn/tgoskits/docs/contributing/repo).
-2. Create a feature branch from `dev`.
-3. Run the relevant `cargo xtask` build, test, or clippy checks after making changes.
-4. Open a PR and describe the change scope, validation, and impact.
-
-For a full development example, documentation contribution, and rootfs maintenance notes, see the [contribution docs](https://rcore-os.cn/tgoskits/docs/contributing/demo). Use [GitHub Issues](https://github.com/rcore-os/tgoskits/issues) for feedback and [GitHub Pull Requests](https://github.com/rcore-os/tgoskits/pulls) for patches.
-
-## 5. License
-
-TGOSKits as a whole is licensed under [Apache-2.0](./LICENSE). Some subtree components may include their own license files; if there is any difference, use the license file in the component directory as the source of truth.
+- `os/axvisor/`：虚拟化运行时、实时 CPU 预留、板级配置和 VM 配置，是任务一 Axvisor 自身实时性优化与隔离底座的主要落点。
+- `components/axvm`、`components/axvcpu`、`components/axdevice`、`components/axaddrspace`：虚拟机、vCPU、虚拟设备和地址空间等核心虚拟化组件。
+- `components/x86_vlapic`、`components/arm_vgic`：虚拟中断与定时器相关组件，可支撑任务一中的时延与中断路径分析。
+- `test-suit/axvisor/`：Axvisor QEMU、U-Boot 与板级测试入口。
+- `test-suit/starryos/`：StarryOS 普通测试和压力测试入口，可支撑客户机能力、网络和负载场景验证。
+- `drivers/npu/`、`test-suit/starryos/normal/board-orangepi-5-plus/npu-yolov8/`：AI 推理与板级 NPU 验证相关目录，是任务三应用展示的重要参考。
+- `apps/starry/sensevoice-rknn/`（板级应用分支）：SenseVoice 语音识别在 axvisor+starry guest + RK3588 NPU 上的部署与调优材料；任务三相关 PR 编号后续在 `project-delivery/quancheng/pr-summary.md` 中补齐。
+- `rt-robot` 分支中的 `os/axvisor/src/wheel/`、`sensevoice_rknn_npu.py` 和 `orangepi-5-plus-rt-sd-wheel`：双轮足机器人实物演示原型，包含 SenseVoice 语音命令、RT mailbox 转发、8ms 轮足平衡闭环和板级外设控制。
