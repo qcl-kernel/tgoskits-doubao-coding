@@ -1,92 +1,103 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">任务一整体技术架构</title>
-  <desc id="desc">编译期实时核配置经过 SMP 初始化形成虚拟化域和实时域，两个域通过有界命令通信，并由 spin-noirq 检测和实时指标观测提供横向治理。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">Axvisor 实时性保障链</title>
+  <desc id="svg-desc">智能侧干扰依次经过 CPU 所有权隔离、实时调度与优先级继承、关中断临界区治理，最终由实时指标验证。</desc>
   <defs>
-    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#1d4ed8"/>
-      <stop offset="1" stop-color="#0f766e"/>
-    </linearGradient>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
     </marker>
     <style>
-      .title { font: 700 28px sans-serif; fill: #fff; }
-      .subtitle { font: 14px sans-serif; fill: #dbeafe; }
-      .section { font: 700 21px sans-serif; fill: #0f172a; }
-      .label { font: 600 16px sans-serif; fill: #0f172a; }
-      .small { font: 14px sans-serif; fill: #475569; }
-      .white { font: 600 16px sans-serif; fill: #fff; }
-      .domain { stroke-width: 2.5; rx: 18; ry: 18; }
-      .card { stroke-width: 1.7; rx: 12; ry: 12; }
-      .arrow { stroke: #64748b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
-      .dash { stroke: #64748b; stroke-width: 2; stroke-dasharray: 8 7; fill: none; marker-end: url(#arrow); }
+      .label { font: 700 18px Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .body { font: 400 14px Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #334155; }
+      .small { font: 400 12px Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #475569; }
+      .step { font: 700 22px Arial, sans-serif; fill: #fff; }
+      .card { stroke-width: 2; rx: 16; ry: 16; }
+      .inner { fill: #fff; stroke-width: 1.4; rx: 9; ry: 9; }
+      .arrow { fill: none; stroke: #64748b; stroke-width: 2.5; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #94a3b8; stroke-width: 1.7; stroke-dasharray: 6 5; }
     </style>
   </defs>
 
-  <rect width="1200" height="720" fill="#f8fafc"/>
-  <rect x="0" y="0" width="1200" height="82" fill="url(#header)"/>
-  <text x="600" y="38" text-anchor="middle" class="title">任务一：Axvisor 实时性与隔离整体技术架构</text>
-  <text x="600" y="63" text-anchor="middle" class="subtitle">CPU 所有权隔离 · RT FIFO · PI mutex · timer/抢占可观测性</text>
+  <rect width="1200" height="560" fill="#f8fafc"/>
 
-  <rect x="360" y="105" width="480" height="70" class="card" fill="#e0f2fe" stroke="#0284c7"/>
-  <text x="600" y="134" text-anchor="middle" class="label">编译期配置：realtime_cpu_id</text>
-  <text x="600" y="158" text-anchor="middle" class="small">指定唯一实时核；-1 表示关闭实时域</text>
-  <path d="M600 175 V212" class="arrow"/>
+  <!-- Interference sources -->
+  <rect x="30" y="110" width="185" height="315" class="card" fill="#fff1f2" stroke="#e11d48"/>
+  <circle cx="68" cy="148" r="20" fill="#e11d48"/>
+  <text x="68" y="156" text-anchor="middle" class="step">0</text>
+  <text x="122" y="153" text-anchor="middle" class="label">干扰输入</text>
+  <rect x="52" y="185" width="140" height="50" class="inner" stroke="#fda4af"/>
+  <text x="122" y="207" text-anchor="middle" class="body">Starry vCPU</text>
+  <text x="122" y="225" text-anchor="middle" class="small">AI / 系统负载</text>
+  <rect x="52" y="252" width="140" height="50" class="inner" stroke="#fda4af"/>
+  <text x="122" y="274" text-anchor="middle" class="body">VM / I/O worker</text>
+  <text x="122" y="292" text-anchor="middle" class="small">网络 / 存储 / console</text>
+  <rect x="52" y="319" width="140" height="50" class="inner" stroke="#fda4af"/>
+  <text x="122" y="341" text-anchor="middle" class="body">锁与中断</text>
+  <text x="122" y="359" text-anchor="middle" class="small">竞争 / 长关中断</text>
+  <text x="122" y="400" text-anchor="middle" class="small">需要逐层阻断</text>
 
-  <rect x="330" y="215" width="540" height="62" class="card" fill="#f1f5f9" stroke="#64748b"/>
-  <text x="600" y="241" text-anchor="middle" class="label">SMP 初始化：校验 CPU 拓扑并建立唯一所有权</text>
-  <text x="600" y="263" text-anchor="middle" class="small">online/capacity/BSP 校验 · 派生 virtualization mask 与 realtime mask</text>
+  <path d="M215 267 H260" class="arrow"/>
 
-  <path d="M500 277 V309 H295 V335" class="arrow"/>
-  <path d="M700 277 V309 H905 V335" class="arrow"/>
+  <!-- Layer 1 -->
+  <rect x="265" y="70" width="260" height="395" class="card" fill="#eff6ff" stroke="#2563eb"/>
+  <circle cx="303" cy="110" r="22" fill="#2563eb"/>
+  <text x="303" y="118" text-anchor="middle" class="step">1</text>
+  <text x="395" y="116" text-anchor="middle" class="label">CPU 所有权隔离</text>
+  <rect x="290" y="150" width="210" height="67" class="inner" stroke="#93c5fd"/>
+  <text x="395" y="176" text-anchor="middle" class="body">build TOML</text>
+  <text x="395" y="198" text-anchor="middle" class="small">realtime_cpu_id / -1</text>
+  <path d="M395 217 V245" class="arrow"/>
+  <rect x="290" y="250" width="210" height="67" class="inner" stroke="#93c5fd"/>
+  <text x="395" y="276" text-anchor="middle" class="body">SMP 拓扑校验</text>
+  <text x="395" y="298" text-anchor="middle" class="small">online / capacity / BSP</text>
+  <path d="M395 317 V345" class="arrow"/>
+  <rect x="290" y="350" width="210" height="82" class="inner" stroke="#93c5fd"/>
+  <text x="395" y="376" text-anchor="middle" class="body">静态 CPU 分区</text>
+  <text x="395" y="398" text-anchor="middle" class="small">vCPU/worker → 虚拟化域</text>
+  <text x="395" y="418" text-anchor="middle" class="small">spawn_realtime → 实时域</text>
 
-  <rect x="55" y="335" width="480" height="270" class="domain" fill="#eff6ff" stroke="#2563eb"/>
-  <rect x="55" y="335" width="480" height="52" rx="16" ry="16" fill="#2563eb"/>
-  <text x="295" y="368" text-anchor="middle" class="white">虚拟化域 · pCPU0..2</text>
+  <path d="M525 267 H570" class="arrow"/>
 
-  <rect x="85" y="410" width="195" height="72" class="card" fill="#fff" stroke="#60a5fa"/>
-  <text x="182" y="439" text-anchor="middle" class="label">StarryOS vCPU</text>
-  <text x="182" y="463" text-anchor="middle" class="small">AI / 文件系统 / 网络</text>
+  <!-- Layer 2 -->
+  <rect x="575" y="70" width="260" height="395" class="card" fill="#ecfdf5" stroke="#059669"/>
+  <circle cx="613" cy="110" r="22" fill="#059669"/>
+  <text x="613" y="118" text-anchor="middle" class="step">2</text>
+  <text x="705" y="116" text-anchor="middle" class="label">调度与锁保障</text>
+  <rect x="600" y="150" width="210" height="78" class="inner" stroke="#6ee7b7"/>
+  <text x="705" y="177" text-anchor="middle" class="body">RT FIFO</text>
+  <text x="705" y="199" text-anchor="middle" class="small">高优先级先运行</text>
+  <text x="705" y="217" text-anchor="middle" class="small">同优先级保持 FIFO</text>
+  <path d="M705 228 V256" class="arrow"/>
+  <rect x="600" y="261" width="210" height="92" class="inner" stroke="#6ee7b7"/>
+  <text x="705" y="288" text-anchor="middle" class="body">PI mutex</text>
+  <text x="705" y="310" text-anchor="middle" class="small">高优先级 waiter donation</text>
+  <text x="705" y="330" text-anchor="middle" class="small">owner 重排 / unlock 恢复</text>
+  <path d="M705 353 V381" class="arrow"/>
+  <rect x="600" y="386" width="210" height="46" class="inner" stroke="#6ee7b7"/>
+  <text x="705" y="414" text-anchor="middle" class="body">高优先级任务可推进</text>
 
-  <rect x="310" y="410" width="195" height="72" class="card" fill="#fff" stroke="#60a5fa"/>
-  <text x="407" y="439" text-anchor="middle" class="label">VM / I/O worker</text>
-  <text x="407" y="463" text-anchor="middle" class="small">虚拟设备与管理任务</text>
+  <path d="M835 267 H880" class="arrow"/>
 
-  <rect x="85" y="505" width="195" height="72" class="card" fill="#fff" stroke="#60a5fa"/>
-  <text x="182" y="534" text-anchor="middle" class="label">普通 IRQ</text>
-  <text x="182" y="558" text-anchor="middle" class="small">网卡 / 块设备 / console</text>
+  <!-- Layer 3 -->
+  <rect x="885" y="70" width="285" height="395" class="card" fill="#fff7ed" stroke="#ea580c"/>
+  <circle cx="923" cy="110" r="22" fill="#ea580c"/>
+  <text x="923" y="118" text-anchor="middle" class="step">3</text>
+  <text x="1030" y="116" text-anchor="middle" class="label">IRQ 临界区治理</text>
+  <rect x="910" y="150" width="235" height="78" class="inner" stroke="#fdba74"/>
+  <text x="1027" y="177" text-anchor="middle" class="body">spin-noirq 检测</text>
+  <text x="1027" y="199" text-anchor="middle" class="small">per-CPU 持锁时长</text>
+  <text x="1027" y="217" text-anchor="middle" class="small">max / violations / callsite</text>
+  <path d="M1027 228 V256" class="arrow"/>
+  <rect x="910" y="261" width="235" height="92" class="inner" stroke="#fdba74"/>
+  <text x="1027" y="288" text-anchor="middle" class="body">锁类型治理</text>
+  <text x="1027" y="310" text-anchor="middle" class="small">任务上下文 → PI mutex</text>
+  <text x="1027" y="330" text-anchor="middle" class="small">IRQ 共享 → 缩短临界区</text>
+  <path d="M1027 353 V381" class="arrow"/>
+  <rect x="910" y="386" width="235" height="46" class="inner" stroke="#fdba74"/>
+  <text x="1027" y="414" text-anchor="middle" class="body">timer IRQ 可及时响应</text>
 
-  <rect x="310" y="505" width="195" height="72" class="card" fill="#fff" stroke="#60a5fa"/>
-  <text x="407" y="534" text-anchor="middle" class="label">隔离约束</text>
-  <text x="407" y="558" text-anchor="middle" class="small">不得进入实时 CPU mask</text>
-
-  <rect x="665" y="335" width="480" height="270" class="domain" fill="#ecfdf5" stroke="#059669"/>
-  <rect x="665" y="335" width="480" height="52" rx="16" ry="16" fill="#059669"/>
-  <text x="905" y="368" text-anchor="middle" class="white">实时域 · pCPU3</text>
-
-  <rect x="695" y="410" width="195" height="72" class="card" fill="#fff" stroke="#34d399"/>
-  <text x="792" y="439" text-anchor="middle" class="label">RT FIFO</text>
-  <text x="792" y="463" text-anchor="middle" class="small">高优先级抢占 / 同级 FIFO</text>
-
-  <rect x="920" y="410" width="195" height="72" class="card" fill="#fff" stroke="#34d399"/>
-  <text x="1017" y="439" text-anchor="middle" class="label">PI mutex</text>
-  <text x="1017" y="463" text-anchor="middle" class="small">owner donation / unlock 恢复</text>
-
-  <rect x="695" y="505" width="195" height="72" class="card" fill="#fff" stroke="#34d399"/>
-  <text x="792" y="534" text-anchor="middle" class="label">RT timer / IRQ</text>
-  <text x="792" y="558" text-anchor="middle" class="small">周期唤醒与设备事件</text>
-
-  <rect x="920" y="505" width="195" height="72" class="card" fill="#fff" stroke="#34d399"/>
-  <text x="1017" y="534" text-anchor="middle" class="label">实时控制任务</text>
-  <text x="1017" y="558" text-anchor="middle" class="small">8ms balance loop</text>
-
-  <path d="M535 460 H650" class="dash"/>
-  <rect x="535" y="425" width="130" height="28" rx="14" fill="#fff7ed" stroke="#f97316"/>
-  <text x="600" y="445" text-anchor="middle" class="small">有界控制命令</text>
-
-  <rect x="155" y="635" width="890" height="58" class="card" fill="#fff7ed" stroke="#f97316"/>
-  <text x="600" y="660" text-anchor="middle" class="label">横向治理：spin-noirq 长持锁检测与锁类型审计</text>
-  <text x="600" y="682" text-anchor="middle" class="small">per-CPU timer 延迟 · 高优先级唤醒延迟 · P99 / max / deadline miss</text>
-  <path d="M295 605 V635" class="arrow"/>
-  <path d="M905 605 V635" class="arrow"/>
+  <!-- Evidence lane -->
+  <path d="M395 465 V495 M705 465 V495 M1027 465 V495" class="dash"/>
+  <rect x="265" y="495" width="905" height="45" rx="12" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="717" y="516" text-anchor="middle" class="body">证据闭环：CPU 归属日志 · PI 三任务回归 · timer IRQ latency · 高优先级 wake latency</text>
+  <text x="717" y="534" text-anchor="middle" class="small">P50 / P99 / max / deadline miss · QEMU 契约验证 + RK3588 实板压力验证</text>
 </svg>
