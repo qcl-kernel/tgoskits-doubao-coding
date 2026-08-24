@@ -987,3 +987,73 @@ cargo xtask starry test qemu --target aarch64 --stress
 ## 8. 结语
 
 本方案将“Axvisor 实时性与隔离”“控制通信”“AI 联动应用”统一到同一条技术链路中。任务一解决 Axvisor 在 AMP 混合系统中能否稳定运行，任务二解决智能侧与实时侧之间能否可靠交换控制语义，任务三证明前两项能力能够支撑实际 AI 控制闭环。该组织方式既保留每项任务的独立验收证据，也能体现项目整体技术价值。
+
+## 9. 相关 PR 复核与团队贡献
+
+本节汇总 `rcore-os/tgoskits` 在 2026-06-24 至 2026-08-24 期间与三项任务相关的 PR。提交时间均为 UTC，合入状态以 2026-08-24 的 GitHub 状态为准。表中的 Open、Draft 和 Closed 均表示尚未合入上游；Merged 表示已经合入。
+
+### 9.1 团队成员贡献
+
+本团队成员围绕实时调度、AMP 板级运行、双客户机网络和可观测性形成了连续的 PR 链路：
+
+| 团队成员 | 主要 PR | 贡献范围 |
+| --- | --- | --- |
+| Debin（luodeb） | [#1926](https://github.com/rcore-os/tgoskits/pull/1926)、[#1927](https://github.com/rcore-os/tgoskits/pull/1927)、[#2155](https://github.com/rcore-os/tgoskits/pull/2155)–[#2159](https://github.com/rcore-os/tgoskits/pull/2159)、[#2175](https://github.com/rcore-os/tgoskits/pull/2175) | 完成 guest FDT/PSCI 基础修复和已合入的双客户机 VirtIO-net 底座；继续推进 StarryOS/ArceOS 网络协议、可靠性、指标采集，以及 AArch64/RK3588 AMP 支持。 |
+| Zechen Peng（pengzechen） | [#2160](https://github.com/rcore-os/tgoskits/pull/2160)、[#2161](https://github.com/rcore-os/tgoskits/pull/2161)、[#2162](https://github.com/rcore-os/tgoskits/pull/2162) | 形成“实时 CPU 预留—RT FIFO 调度—mutex 优先级继承”的实时调度改造链路。 |
+| Xiaohui（buhenxihuan） | [#2165](https://github.com/rcore-os/tgoskits/pull/2165)、[#2166](https://github.com/rcore-os/tgoskits/pull/2166) | 修复 RK3588 大小核调频负载归因，并通过 vCPU 大核绑定、日志和 I/O 路径优化缩小 Orange Pi 5 Plus 客户机性能差距。 |
+
+### 9.2 任务一：实时性改造与验证
+
+| PR | 提交者 | 提交时间 | 合入状态 | 主要内容 |
+| --- | --- | --- | --- | --- |
+| [#1891](https://github.com/rcore-os/tgoskits/pull/1891) | luchaohai | 2026-08-05 14:32 | Open，未合入 | 增加优先级抢占式实时调度器，支持高优先级抢占、同优先级时间片轮转及动态优先级调整。 |
+| [#1936](https://github.com/rcore-os/tgoskits/pull/1936) | fengying996 | 2026-08-09 23:41 | Closed，未合入 | 面向实时系统改造 Axvisor，涉及调度、抢占、定时器、中断路径、CPU 亲和性、锁临界区及后台任务。 |
+| [#1938](https://github.com/rcore-os/tgoskits/pull/1938) | livstyle | 2026-08-10 01:30 | Open，未合入 | 将 Orange Pi 5 Plus、StarryOS 和 Task 1–3 实验性能力迁移到上游 `dev`；保留 vCPU CFS 优先级配置，但部分旧实时优化路径未迁回。 |
+| [#2001](https://github.com/rcore-os/tgoskits/pull/2001) | Joseph Joshua Anggita | 2026-08-13 05:54 | Open，未合入 | 从设备树导出每个 CPU 的 capacity，为 RK3588 大小核调度和 CPU 选择提供基础。 |
+| [#2064](https://github.com/rcore-os/tgoskits/pull/2064) | Joseph Joshua Anggita | 2026-08-15 15:10 | Open，未合入 | 根据 CPU capacity、运行负载和 affinity mask，在 big.LITTLE 平台进行任务初始放置。 |
+| [#2130](https://github.com/rcore-os/tgoskits/pull/2130) | ZCShou | 2026-08-21 03:01 | Merged | 修复外部 deadline 测试活锁以及 Starry 多线程 `execve` 页表根生命周期导致的运行停顿。 |
+| [#2133](https://github.com/rcore-os/tgoskits/pull/2133) | 周睿（ZR233） | 2026-08-21 04:23 | Merged | 修复 VMX MSR 保存和已取消 APIC timer 的处理，提升虚拟 CPU 定时器路径正确性。 |
+| [#2137](https://github.com/rcore-os/tgoskits/pull/2137) | 周睿（ZR233） | 2026-08-21 05:58 | Merged | 修复周期定时器过期后重复编程旧 comparator 的问题，避免 timer IRQ 活锁和极端延迟。 |
+| [#2160](https://github.com/rcore-os/tgoskits/pull/2160) | Zechen Peng（pengzechen） | 2026-08-23 09:56 | Open，未合入 | 为 Axvisor 预留实时 CPU。 |
+| [#2161](https://github.com/rcore-os/tgoskits/pull/2161) | Zechen Peng（pengzechen） | 2026-08-23 10:03 | Open，未合入 | 增加单核 RT FIFO 调度器，是任务一最明确的实时调度实现。 |
+| [#2162](https://github.com/rcore-os/tgoskits/pull/2162) | Zechen Peng（pengzechen） | 2026-08-23 10:12 | Open，未合入 | 基于 #2161 增加 mutex 优先级继承，降低优先级反转造成的延迟。 |
+| [#2165](https://github.com/rcore-os/tgoskits/pull/2165) | Xiaohui（buhenxihuan） | 2026-08-23 10:36 | Open，未合入 | 修复 RK3588 governor 对逻辑 CPU、物理 CPU 及大小核集群的错误归因。 |
+| [#2166](https://github.com/rcore-os/tgoskits/pull/2166) | Xiaohui（buhenxihuan） | 2026-08-23 10:38 | Open，未合入 | 将 guest vCPU 绑定到 A76 大核，并优化日志、ioctl 计时和文件预读路径；提供模型加载、推理和吞吐量数据。 |
+| [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | Debin（luodeb） | 2026-08-24 08:35 | Open，未合入 | 增加 AArch64/RK3588 AMP 支持、`realtime_cpu_id`、实时任务入口、Starry 与宿主 AMP 用例，以及 FDT、GIC、MMIO、NVMe DMA 修复。 |
+
+### 9.3 任务二：客户机间通信
+
+| PR | 提交者 | 提交时间 | 合入状态 | 主要内容 |
+| --- | --- | --- | --- | --- |
+| [#1926](https://github.com/rcore-os/tgoskits/pull/1926) | Debin（luodeb） | 2026-08-08 17:01 | Merged（2026-08-09 06:11） | 保留生成的 guest FDT 中的 PSCI 节点，解决 ArceOS AArch64 guest 启动基础问题，是 #1927 的前置依赖。 |
+| [#1927](https://github.com/rcore-os/tgoskits/pull/1927) | Debin（luodeb） | 2026-08-08 17:01 | Merged（2026-08-10 08:56） | 增加双客户机 VirtIO-net：VirtIO MMIO、split virtqueue、内部二层交换机、guest FDT MMIO/IRQ/DMA 描述、DMA polling、vCPU wake，以及双 ArceOS guest TCP 64 KiB 数据和 checksum 验证。 |
+| [#1958](https://github.com/rcore-os/tgoskits/pull/1958) | Joe Hu（Huxingyu） | 2026-08-10 22:20 | Open，未合入 | 建立 Linux/RTOS 双客户机 UDP/IP 链路和 T2N1 协议；包含版本、类型、长度、序号、时间戳、错误码、CRC、ACK、心跳、重传和故障恢复，并记录 MAC、IP、端口及 VirtIO-MMIO 拓扑。 |
+| [#2068](https://github.com/rcore-os/tgoskits/pull/2068) | baitwo02 | 2026-08-16 14:25 | Open，未合入 | 实现 IVC Message V1 分片和全双工传输；因采用共享区域且未实现重传和乱序恢复，只能视为辅助方案，不能作为任务二要求的 IP 主通道。 |
+| [#2155](https://github.com/rcore-os/tgoskits/pull/2155) | Debin（luodeb） | 2026-08-23 08:21 | Open，未合入 | 通过 VirtIO-net 和 Axvisor 内部二层交换机连接 StarryOS、ArceOS 客户机。 |
+| [#2156](https://github.com/rcore-os/tgoskits/pull/2156) | Debin（luodeb） | 2026-08-23 08:21 | Open，未合入 | 定义应用层控制协议，包含版本、消息类型、载荷长度、序号、时间戳、错误码和 CRC32；支持 CONTROL、STATUS、ERROR、HEARTBEAT、ACK，并实现 TCP 分帧。 |
+| [#2157](https://github.com/rcore-os/tgoskits/pull/2157) | Debin（luodeb） | 2026-08-23 08:22 | Open，未合入 | 增加超时、有界重试、断连重连、异常会话恢复及重复、乱序、过期消息处理。 |
+| [#2158](https://github.com/rcore-os/tgoskits/pull/2158) | Debin（luodeb） | 2026-08-23 08:22 | Open，未合入 | 建立双客户机 QEMU 验证流程，统计请求成功率、超时、RTT P50/P95 和有效吞吐量。 |
+| [#2159](https://github.com/rcore-os/tgoskits/pull/2159) | Debin（luodeb） | 2026-08-23 08:22 | Open，未合入 | 补齐 StarryOS `eth0` 初始化、`10.0.42.1/24` 地址、rootfs 注入、递增序号、ERROR 帧及重连/恢复指标。 |
+
+### 9.4 任务三：AI 模型与控制联动
+
+| PR | 提交者 | 提交时间 | 合入状态 | 主要内容 |
+| --- | --- | --- | --- | --- |
+| [#1958](https://github.com/rcore-os/tgoskits/pull/1958) | Joe Hu（Huxingyu） | 2026-08-10 22:20 | Open，未合入 | 提供任务三依赖的 Linux/RTOS T2N1 UDP/IP 通信和可靠性协议。 |
+| [#1971](https://github.com/rcore-os/tgoskits/pull/1971) | Joe Hu（Huxingyu） | 2026-08-11 17:41 | Open，未合入 | Linux guest 执行 1D temporal CNN 推理，通过 T2N1 向 RTOS 发送控制量；RTOS 更新虚拟 plant 并回传状态。包含固定参数 P 控制基线、100 ms 周期、RTT、推理时间、RMSE、稳定时间和故障恢复数据。 |
+| [#2078](https://github.com/rcore-os/tgoskits/pull/2078) | Lin（451846939） | 2026-08-17 07:03 | Open，未合入 | 实现 AI-RTOS 多客户机演示，支持 Linux/StarryOS、ArceOS/RT-Thread/Zephyr/FreeRTOS、YOLOv8、TCP/UDP/IP、RTOS 控制输出、状态回传及实时性验证。 |
+| [#2172](https://github.com/rcore-os/tgoskits/pull/2172) | Joe Hu（Huxingyu） | 2026-08-24 06:11 | Open，Draft，未合入 | 集成 FP-RR 调度、RT-Thread/Zephyr 双客户机网络、客户机内 ncnn/YOLO 推理和控制闭环，并提供 QEMU、RK3588 验证证据。 |
+
+### 9.5 同时涉及多项任务的集成 PR
+
+| PR | 提交者 | 提交时间 | 合入状态 | 主要内容 |
+| --- | --- | --- | --- | --- |
+| [#1938](https://github.com/rcore-os/tgoskits/pull/1938) | livstyle | 2026-08-10 01:30 | Open，未合入 | 将 Orange Pi 5 Plus、StarryOS 及 Task 1–3 实验性能力迁移到最新上游架构。 |
+| [#2141](https://github.com/rcore-os/tgoskits/pull/2141) | 姜坤（livstyle） | 2026-08-21 07:09 | Open，未合入 | 将 Task 1 的 vCPU 优先级/sched-cfs、Task 2 的 ICPC/虚拟交换机测试以及 Task 3 的 Orange Pi baseline 集成到上游 `dev`。 |
+| [#2172](https://github.com/rcore-os/tgoskits/pull/2172) | Joe Hu（Huxingyu） | 2026-08-24 06:11 | Open，Draft，未合入 | Task 1–3 竞赛提交前集成和 CI 验证分支。 |
+
+### 9.6 复核结论
+
+- 已合入且直接支撑任务二的核心 PR：[#1926](https://github.com/rcore-os/tgoskits/pull/1926)、[#1927](https://github.com/rcore-os/tgoskits/pull/1927)。
+- 任务二后续协议和指标链路：[#1958](https://github.com/rcore-os/tgoskits/pull/1958)、[#2155](https://github.com/rcore-os/tgoskits/pull/2155)–[#2159](https://github.com/rcore-os/tgoskits/pull/2159)，截至复核时间均未合入。
+- 任务一最明确的实时调度实现：[#2161](https://github.com/rcore-os/tgoskits/pull/2161)，截至复核时间未合入。
