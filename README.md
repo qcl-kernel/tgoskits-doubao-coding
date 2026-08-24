@@ -10,23 +10,23 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| [technical-solution.md](project-delivery/quancheng/technical-solution.md) | 设计方案正文，说明总体架构、三任务设计和部署复现关系。 |
-| [test-plan.md](project-delivery/quancheng/test-plan.md) | 测试验收框架，覆盖启动、隔离、通信、性能、AI 联动和综合指标记录。 |
-| [pr-summary.md](project-delivery/quancheng/pr-summary.md) | 参赛 PR 清单，用于整理各 PR 与三项任务之间的对应关系。 |
-| [assets/task3-ai-control.svg](project-delivery/quancheng/assets/task3-ai-control.svg) | 任务三 AI 语音识别到 Axvisor 实时控制闭环架构图。 |
-| [assets/task3-code-architecture.svg](project-delivery/quancheng/assets/task3-code-architecture.svg) | 任务三 StarryOS 应用、Axvisor 通道和实时控制任务的代码模块架构图。 |
-| [assets/task3-rt-loop.svg](project-delivery/quancheng/assets/task3-rt-loop.svg) | Axvisor 预留实时 CPU 上 8ms 双轮足控制循环流程图。 |
-| [assets/control_voice.wav](project-delivery/quancheng/assets/control_voice.wav) | 双轮足机器人语音控制输入样例，用于任务三 AI 联动演示。 |
-| [assets/video.mp4](project-delivery/quancheng/assets/video.mp4) | 双轮足机器人端到端实物演示视频。 |
-| [assets/minicom_output.jpg](project-delivery/quancheng/assets/minicom_output.jpg) | 开发板启动 Axvisor/客户机/实时任务的串口输出截图。 |
+| [technical-solution.md](project-delivery/豆包coding-成果材料/technical-solution.md) | 设计方案正文，说明总体架构、三任务设计和部署复现关系。 |
+| [test-plan.md](project-delivery/豆包coding-成果材料/test-plan.md) | 测试验收框架，覆盖启动、隔离、通信、性能、AI 联动和综合指标记录。 |
+| [pr-summary.md](project-delivery/豆包coding-成果材料/pr-summary.md) | 参赛 PR 清单，用于整理各 PR 与三项任务之间的对应关系。 |
+| [assets/task3-ai-control.svg](project-delivery/豆包coding-成果材料/assets/task3-ai-control.svg) | 任务三 AI 语音识别到 Axvisor 实时控制闭环架构图。 |
+| [assets/task3-code-architecture.svg](project-delivery/豆包coding-成果材料/assets/task3-code-architecture.svg) | 任务三 StarryOS 应用、Axvisor 通道和实时控制任务的代码模块架构图。 |
+| [assets/task3-rt-loop.svg](project-delivery/豆包coding-成果材料/assets/task3-rt-loop.svg) | Axvisor 预留实时 CPU 上 8ms 双轮足控制循环流程图。 |
+| [assets/control_voice.wav](project-delivery/豆包coding-成果材料/assets/control_voice.wav) | 双轮足机器人语音控制输入样例，用于任务三 AI 联动演示。 |
+| [assets/video.mp4](project-delivery/豆包coding-成果材料/assets/video.mp4) | 双轮足机器人端到端实物演示视频。 |
+| [assets/minicom_output.jpg](project-delivery/豆包coding-成果材料/assets/minicom_output.jpg) | 开发板启动 Axvisor/客户机/实时任务的串口输出截图。 |
 
 ## 材料关系
 
 三份材料之间的关系如下：
 
-1. `project-delivery/quancheng/technical-solution.md` 描述总体方案和三任务依赖关系。
-2. `project-delivery/quancheng/test-plan.md` 描述测试维度、记录字段和综合指标。
-3. `project-delivery/quancheng/pr-summary.md` 汇总参赛 PR，并将 PR 映射到任务一、任务二、任务三。
+1. `project-delivery/豆包coding-成果材料/technical-solution.md` 描述总体方案和三任务依赖关系。
+2. `project-delivery/豆包coding-成果材料/test-plan.md` 描述测试维度、记录字段和综合指标。
+3. `project-delivery/豆包coding-成果材料/pr-summary.md` 汇总参赛 PR，并将 PR 映射到任务一、任务二、任务三。
 
 ## 与仓库代码的关系
 
@@ -38,5 +38,5 @@ TGOSKits 仓库提供 ArceOS、StarryOS、Axvisor 及相关组件的统一开发
 - `test-suit/axvisor/`：Axvisor QEMU、U-Boot 与板级测试入口。
 - `test-suit/starryos/`：StarryOS 普通测试和压力测试入口，可支撑客户机能力、网络和负载场景验证。
 - `drivers/npu/`、`test-suit/starryos/normal/board-orangepi-5-plus/npu-yolov8/`：AI 推理与板级 NPU 验证相关目录，是任务三应用展示的重要参考。
-- `apps/starry/sensevoice-rknn/`（板级应用分支）：SenseVoice 语音识别在 axvisor+starry guest + RK3588 NPU 上的部署与调优材料；任务三相关 PR 编号后续在 `project-delivery/quancheng/pr-summary.md` 中补齐。
+- `apps/starry/sensevoice-rknn/`（板级应用分支）：SenseVoice 语音识别在 axvisor+starry guest + RK3588 NPU 上的部署与调优材料；任务三相关 PR 编号后续在 `project-delivery/豆包coding-成果材料/pr-summary.md` 中补齐。
 - `rt-robot` 分支中的 `os/axvisor/src/wheel/`、`sensevoice_rknn_npu.py` 和 `orangepi-5-plus-rt-sd-wheel`：双轮足机器人实物演示原型，包含 SenseVoice 语音命令、RT mailbox 转发、8ms 轮足平衡闭环和板级外设控制。
