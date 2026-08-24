@@ -229,16 +229,7 @@ ArceOS test suite run OK!
 
 ![spin-noirq 长持锁对实时调度的影响链](assets/spin-noirq-timer-impact.svg)
 
-影响链可以概括为：
-
-```text
-长时间持有 spin-noirq
-    -> 本地 IRQ 关闭
-    -> per-CPU timer 到期但无法响应
-    -> 定时唤醒和 reschedule 请求推迟
-    -> 高优先级任务无法及时抢占
-    -> jitter 与 deadline miss 增加
-```
+长时间关闭本地中断会同时延迟 timer 响应、任务唤醒和调度抢占，最终表现为实时抖动和 deadline miss。
 
 #### 3.4.2 滥用检测能力
 
