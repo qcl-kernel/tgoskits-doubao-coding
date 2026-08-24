@@ -86,6 +86,26 @@ the dedicated realtime CPU is outside the ordinary scheduler domain.
 The host-only case deliberately has no external guest-image dependency.
 FreeRTOS comparison remains separate follow-up validation work.
 
+## RK3588 / OrangePi 5 Plus
+
+The board build uses the same compile-time partition as QEMU and reserves
+logical CPU 3 on the eight-core RK3588. It reuses the maintained OrangePi
+Starry VM configuration and enables the Rockchip SDHCI/MMC drivers:
+
+```sh
+cargo xtask axvisor build \
+  --arch aarch64 \
+  --config test-suit/axvisor/normal/board-orangepi-5-plus/starry-host-amp/build-aarch64-unknown-none-softfloat.toml
+cargo xtask axvisor test board \
+  --board orangepi-5-plus-starry-host-amp
+```
+
+The board case is a deployment/build recipe; it must be run with an
+OrangePi-5-Plus board lease and the board's Linux rootfs/guest assets prepared
+according to the existing board guide. QEMU results must not be presented as
+RK3588 timing evidence. Board acceptance must additionally collect the
+`AMP_RT_RESULT` line under idle, guest CPU, storage and network pressure.
+
 ## Rollback
 
 Setting `realtime_cpu_id = -1` (or omitting it) disables realtime task creation

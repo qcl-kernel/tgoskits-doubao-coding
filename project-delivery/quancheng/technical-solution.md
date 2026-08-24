@@ -330,6 +330,14 @@ cargo xtask axvisor test qemu --arch aarch64 -g normal -c qemu-amp/starry-host-a
 
 该结果只证明 QEMU 下的启动、placement、调度与 DMA 契约；真实板卡仍需补测设备 IRQ 归属、缓存/内存总线竞争、电源管理中断和长时间 deadline miss。
 
+RK3588/OrangePi 5 Plus 的运行构建已补充到
+`test-suit/axvisor/normal/board-orangepi-5-plus/starry-host-amp/`。该配置在
+编译期固定 `realtime_cpu_id = 3`，启用 Rockchip SDHCI/MMC 驱动并复用现有
+Starry SMP1 VM。板卡运行使用 `cargo xtask axvisor test board
+--board orangepi-5-plus-starry-host-amp`，需要先取得 OrangePi-5-Plus 板卡租约并按
+板卡指南准备 Linux rootfs 和 guest 资源；在实板完成压力测试前，不把 QEMU 的
+`AMP_RT_RESULT` 数值当作 RK3588 的实时性结论。
+
 ## 4. 任务二：客户机通信与协议设计
 
 ### 4.1 目标、范围与八项变更的依赖关系
