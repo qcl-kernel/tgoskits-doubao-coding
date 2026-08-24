@@ -100,8 +100,8 @@
 | 场景 | 平台 | 命令或用例 | 关键结果 | 日志位置 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | Axvisor QEMU 启动 | 待补 | 待补 | 待补 | 待补 | 任务一 |
-| 智能侧 guest + RT 任务启动 | 待补 | 待补 | 待补 | 待补 | 任务一 |
-| Axvisor RT 周期任务延迟 | 待补 | 待补 | 待补 | 待补 | 任务一 |
+| 智能侧 guest + RT 任务启动 | AArch64 QEMU | `cargo xtask axvisor test qemu --arch aarch64 -g normal -c qemu-amp/starry-host-amp` | 同时输出 `STARRY_AMP_GUEST_READY` 与 `AMP_RT_RESULT source=host` | [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | 任务一 |
+| Axvisor RT 周期任务延迟 | AArch64 QEMU | `cargo xtask axvisor test qemu --arch aarch64 -g normal -c qemu-amp/host-rt` | 1000 个 1ms 周期样本，输出 P50/P99、最大延迟和 deadline miss | [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | 任务一 |
 | 智能侧压力负载干扰 | 待补 | 待补 | 待补 | 待补 | 任务一 |
 | 双轮足 8ms 控制闭环 | Orange Pi 5 Plus + 双轮足机器人 | `rt-robot` 分支实物配置 | RT 侧持续执行 8ms balance loop，记录 deadline miss 和电机/IMU 耗时 | `assets/minicom_output.jpg`、运行串口日志 | 任务一/任务三 |
 
