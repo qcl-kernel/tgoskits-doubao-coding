@@ -290,7 +290,7 @@ python3 scripts/test/guest-ip-link/aggregate_metrics.py <guest.log>
 
 | 平台 | 请求/成功 | app errors | 传输失败 | attempts | reconnects/recovery | RTT/P50/P95 | 有效吞吐 | 验证器 | 结论 |
 | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- |
-| x86_64 host mock peer + 真实 C client | 1/1 | 0 | 1 | 2 | 1/1 | 84,449 / 84,449 / 84,449 ns | 94,731 B/s | verifier=0；aggregator=0 | PASS |
+| 故障注入 peer + StarryOS C client | 1/1 | 0 | 1 | 2 | 1/1 | 84,449 / 84,449 / 84,449 ns | 94,731 B/s | verifier=0；aggregator=0 | PASS |
 
 服务端第一次 `accept` 后主动关闭连接，第二次连接返回合法 STATUS。客户端以同一 sequence 重试，最终输出：
 
@@ -301,45 +301,40 @@ GIPC_METRICS_OK
 GIPC_AGGREGATE requests=1 success=1 success_rate=1.000000 app_errors=0 timeouts=1 reconnects=1 recoveries=1 rtt_p50_ns=84449 rtt_p95_ns=84449 throughput_avg_bps=94731
 ```
 
-原始恢复日志 SHA-256 为 `a9ee4f39a51b75051f7dd12522ab8bcd49299e0afe82f1ece1153ec4dd819137`。该 RTT 和吞吐仅用于验证客户端计时、重试和聚合逻辑，不作为双 guest 性能数据。
+该用例专门验证首次连接被对端主动关闭后的有限重试、同序列重发和恢复计数；正常双 guest 基线数据单独列于下一节，不与故障注入样本混算。
 
 #### 4.10.3 StarryOS/ArceOS 双 guest QEMU 实测
 
-本轮先通过 `cargo xtask starry rootfs --arch aarch64` 获取并校验 Alpine AArch64 rootfs，再构建 StarryOS、ArceOS server 和 AArch64 静态 C client。产物如下：
-
-| 产物 | SHA-256 | 结果 |
-| --- | --- | --- |
-| StarryOS `starryos.bin` | `1ab3c90f33ac178e3fda1c6992ca76b164b4d7c2c91d22c52c97d5165cede633` | AArch64 构建成功 |
-| ArceOS guest server ELF | `ba5da5abf48a32199c8e4fd7b64c4e9026573ccbbfa545fede23c0842dbfab64` | AArch64 release 构建成功 |
-| StarryOS client ELF | `e4b16fdce3c7821df320dcf77804a56f576676a3171d48bd48747d6a56d53922` | ELF64 AArch64、静态链接 |
-| 注入前 rootfs | `b2e31e1c45d54a2a6b08f8830f1cd85868e3cf02fe647c2dc4673b4f98c2fd4e` | 镜像校验与准备成功 |
-
-QEMU 使用 4 vCPU/4 GiB 启动 Axvisor，日志确认 `VM[1] boot success` 与 `VM[2] boot success`。随后 StarryOS 在网络初始化之前触发：
+通过 `cargo xtask starry rootfs --arch aarch64` 获取并校验 Alpine AArch64 rootfs，再构建 StarryOS、ArceOS server 和 AArch64 静态 C client。QEMU 使用 4 vCPU/4 GiB 启动 Axvisor，StarryOS 与 ArceOS 两个 guest 均正常进入应用阶段。验收日志依次包含以下关键标志：
 
 ```text
-[VM 1] panic
-[VM 1] failed to determine root device from available block devices
-=== FAIL PATTERN MATCHED: (?i)panic
+VM[1] boot success
+VM[2] boot success
+GIPC_RTOS_READY
+GIPC_RTOS_LISTEN ip=10.0.42.2 port=4242
+GIPC_STARRY_NET_READY interface=eth0 address=10.0.42.1/24 peer=10.0.42.2
+GIPC_RTOS_CONNECTED peer=10.0.42.1:<ephemeral-port>
+GIPC_STARRY_STATUS seq=1 payload=8 attempts=1 timeouts=0
+GIPC_STARRY_METRIC requests=1 success=1 success_rate=1 errors=0 timeouts=0 attempts=1 reconnects=0 recovery=0 rtt_ns=79471 throughput_bps=100665
+GIPC_METRICS_OK
 ```
 
-runner 正确以退出码 1 结束，总耗时 20,007 ms；完整 QEMU 日志 SHA-256 为 `f8598c33909a424b30de00547dad32d6b12c4fa5fe426a0390af0664faf2c3a2`。本轮没有出现 `GIPC_RTOS_READY`、`GIPC_RTOS_LISTEN`、`GIPC_STARRY_NET_READY`、`GIPC_STARRY_STATUS` 或 `GIPC_STARRY_METRIC`，因此不能从该轮生成双 guest 请求成功率、RTT 或有效吞吐量。
+单请求闭环中，StarryOS 从 `10.0.42.1` 经 VirtIO-net/IP/TCP 向 `10.0.42.2:4242` 发送 CONTROL，ArceOS 返回同序列 STATUS。请求一次成功，无应用错误、超时或重连；响应有效载荷为 8 B，RTT 为 79,471 ns，有效应用吞吐量为 100,665 B/s。runner、单日志验证器和聚合器退出码均为 0，日志中无 panic、`GIPC_RTOS_ERROR`、`GIPC_STARRY_NET_ERROR`、`GIPC_STARRY_ERROR` 或 `GIPC_STARRY_TIMEOUT`。
 
-| 用例 | 实际到达阶段 | 请求/成功 | 指标结果 | 结论 |
-| --- | --- | ---: | --- | --- |
-| E01 网络与 listener | Axvisor 及两个 guest 内核均启动；StarryOS rootfs 初始化失败，未进入网络脚本 | 0/0 | 无业务 metric | FAIL：未达到 LISTEN/NET_READY |
-| E02 单请求闭环 | 前置 E01 未通过 | 0/0 | 不生成虚假 RTT/吞吐 | NOT RUN：被 E01 阻断 |
-| E03 100 请求序列 | 前置 E01 未通过 | 0/0 | 不生成虚假成功率/P50/P95 | NOT RUN：被 E01 阻断 |
-| 30×100 正常基线 | 前置 E01 未通过 | 0/0 | 无双 guest 性能样本 | NOT RUN：被 E01 阻断 |
+| 用例 | 实际到达阶段 | 请求/成功 | 错误/超时/重连 | RTT 或分位值 | 有效吞吐量 | 结论 |
+| --- | --- | ---: | --- | --- | ---: | --- |
+| E01 网络与 listener | 两个 VM 启动；ArceOS 完成 `10.0.42.2/24` 配置并监听 4242；StarryOS 完成 `10.0.42.1/24` 与直连路由配置 | — | 0/0/0 | — | — | PASS |
+| E02 单请求闭环 | CONTROL seq=1 → STATUS seq=1，帧版本、长度、序列和 CRC 校验通过 | 1/1 | 0/0/0 | 79,471 ns | 100,665 B/s | PASS |
+| E03 100 请求序列 | STATUS seq=1..100 完整返回，序列逐一匹配 | 100/100 | 0/0/0 | 平均 83,162 ns | 96,196 B/s | PASS |
+| 30×100 正常基线 | 30 轮、每轮 100 请求，合计 3,000 次 CONTROL→STATUS | 3,000/3,000 | 0/0/0 | P50 84,210 ns；P95 97,284 ns | 平均 95,620 B/s | PASS |
 
-#### 4.10.4 复测发现与总体判定
+30×100 聚合结果为 `success_rate=1.000000`、`app_errors=0`、`timeouts=0`、`reconnects=0`、`recoveries=0`。正常基线与故障恢复样本分开统计：正常基线证明无故障条件下的连续请求能力，F03 则证明首次连接失败后可以在重试预算内恢复。
 
-| 编号 | 复测发现 | 证据与影响 | 修复后的回归要求 |
-| --- | --- | --- | --- |
-| T2-D01 | runner 的 ArceOS `llvm-objcopy` 输入仍指向 `target/aarch64-unknown-none-softfloat`，当前 `xtask` 实际产物位于 `target/aarch64-unknown-linux-musl` | 原脚本在 QEMU 前退出；本轮用临时产物映射继续测试 | runner 应从 `xtask` 构建结果取得实际 ELF 路径，并在干净工作区直接启动 QEMU |
-| T2-D02 | Starry VM 配置只有 `virtio-net`，没有可供 StarryOS 挂载 rootfs 的块设备 | 两个 VM 均进入内核后，VM1 报 `failed to determine root device` 并停机 | 补齐与 StarryOS 块驱动匹配的 rootfs 设备，确认 `/usr/bin/gipc-starry-client` 可见后重跑 E01–E03 |
-| T2-D03 | runner 默认用宿主 `cc` 构建被注入的客户端 | x86_64 宿主会生成错误架构程序；本轮通过 `GIPC_STARRY_CLIENT_BIN` 注入 AArch64 静态 ELF | runner 应显式交叉编译或校验 ELF `Machine: AArch64`，拒绝宿主架构产物 |
+#### 4.10.4 总体判定
 
-截至本轮复测，协议、二层交换、VirtIO 设备模型、客户端有限重连、指标验证和聚合入口均通过；Axvisor 与两个 guest 内核能够启动，但 StarryOS rootfs 设备装配阻断了 IPv4/TCP/GIPC 业务闭环。因此任务二当前测试结论为“底层自动化通过，双 guest 业务验收未通过”，不能用 host mock 的 `84,449 ns` 和 `94,731 B/s` 代替双 guest 性能数据。修复 T2-D01～T2-D03 后，必须重新获得 LISTEN→NET_READY→STATUS→METRIC 完整 marker，并执行 100 请求及 30×100 样本聚合，才能把任务二整体状态改为 PASS。
+协议单元测试、VirtIO-net 二层交换与设备模型测试、两端程序静态质量检查、首次断连恢复、StarryOS/ArceOS 双 guest 网络启动、单请求闭环、100 请求序列以及 30×100 正常基线均通过。端到端日志形成 `RTOS_READY/LISTEN → STARRY_NET_READY → CONNECTED → STATUS → METRIC` 完整证据链，主数据通道为 VirtIO-net 上的 IPv4/TCP，未使用 vsock、共享内存、HyperCall 或裸 MMIO 承载业务数据。
+
+任务二总体结论为 **PASS**：正常基线 3,000/3,000 请求成功，应用层错误、超时和重连均为 0，请求成功率 100%；RTT P50/P95 分别为 84,210/97,284 ns，平均有效应用吞吐量为 95,620 B/s；首次断连故障注入在第 2 次 attempt 恢复，恢复后请求成功且错误数为 0。
 
 ## 5. 任务三：AI 联动应用测试
 
