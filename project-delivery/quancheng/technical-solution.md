@@ -108,23 +108,7 @@ Axvisor 作为统一底座，负责把智能侧 guest 与实时侧 CPU 放在同
 2. 通过单核 RT FIFO 和 PI mutex 保证高优先级任务的运行顺序，并抑制锁等待中的优先级反转；
 3. 通过 spin-noirq 长持锁检测和锁类型治理，避免本地 timer IRQ 被长期屏蔽，从而保证定时唤醒和高优先级抢占能够真正发生。
 
-```text
-build TOML 选择实时核
-        │
-        ▼
-SMP 初始化划分 CPU 所有权
-   ┌──────────────┬─────────────────┐
-   │ 虚拟化域      │ 实时域           │
-   │ Starry vCPU   │ RT FIFO         │
-   │ VM/I/O worker │ PI mutex        │
-   │ 普通 IRQ      │ RT timer/IRQ    │
-   └──────────────┴─────────────────┘
-        │                  │
-        └──── 有界命令 ────┘
-                           │
-                           ▼
-                 spin-noirq 检测与治理
-```
+![任务一整体技术架构](assets/task1-realtime-architecture.svg)
 
 以 4 个物理核心为例，`pCPU0..2` 承载 Axvisor 普通运行时和 StarryOS vCPU，`pCPU3` 作为实时域运行宿主实时任务。该方案属于单一 Axvisor 镜像内的静态 CPU 分区式 AMP：它提供 CPU、调度和资源所有权隔离，但实时任务仍与 Axvisor 共享地址空间、缓存和内存总线，因此不等同于双镜像 AMP 的故障隔离，也不能只凭 QEMU 数据宣称硬实时。
 
