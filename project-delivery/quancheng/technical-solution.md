@@ -284,6 +284,24 @@ ArceOS test suite run OK!
 SPIN_NOIRQ_LONG_HOLD cpu=3 lock=... duration_ns=... threshold_ns=...
 SPIN_NOIRQ_MAX cpu=3 max_ns=... violations=...
 ```
+### 3.4.3 spin no irq 锁优化验证口径
+
+本阶段的锁优化不直接猜测哪些 `SpinLock::lock_irqsave()` 可以替换，而是先建立可复现的观测数据，再做最小范围替换，最后用同一 workload 对比优化前后的性能和实时性指标。
+
+| 阶段 | 目标 | 必须观察的结果 |
+| --- | --- | --- |
+| 1. 观测 spin no irq 使用 | 在 `axtask` lockdep trace 中记录 IRQ-save spin/rwlock 成功获取时是否处于 IRQ context | dump 能列出本轮 workload 中“使用 IRQ-save 获取、但从未在 IRQ context 中出现”的锁实例，同时给出获取调用点和锁 class 创建点 |
+| 2. 替换非 IRQ 锁 | 将确认只在任务上下文使用、且不属于调度器敏感或 raw 上下文的 spin no irq 锁替换为 sleepable mutex | 替换点不再关闭本地 IRQ；不会进入 IRQ handler、scheduler raw path 或不可睡眠临界区；原有功能测试和 lockdep 检查保持通过 |
+| 3. 对比优化收益 | 使用同一构建、同一负载和同一统计口径对比替换前后 | 记录 lock hold/wait 行为、IRQ-off 时间、调度延迟、wake-up latency、jitter、吞吐或控制周期 deadline miss；只报告平均值不足以证明优化有效 |
+
+性能结果必须记录硬件型号、CPU 频率策略、测试时长、样本数、StarryOS 压力负载、IRQ 配置、开启的 lockdep/trace 配置和统计方法。替换收益以优化前后同场景对照为准；如果某个锁在扩展 workload 中被观测到进入 IRQ context，必须撤回替换或拆分锁边界。
+
+| PR | 解决的问题 | 关键机制 | 验证重点 |
+| --- | --- | --- | --- |
+| [#2160](https://github.com/rcore-os/tgoskits/pull/2160) | Axvisor 层缺少 CPU 所有权边界 | CPU owner、secondary 分流、VM placement 与资源排除设计 | 本方案复用其分区原则，但 RT CPU 保留受限 `axtask` 调度域 |
+| [#2161](https://github.com/rcore-os/tgoskits/pull/2161) | 默认 FIFO 不支持 RT 优先级 | `RtFifoScheduler` 按有效优先级和 FIFO 顺序选任务 | 高优先级先运行、同优先级 FIFO、tick 抢占判定 |
+| [#2162](https://github.com/rcore-os/tgoskits/pull/2162) | mutex 未使用优先级，存在优先级反转 | base/donated/effective priority，owner donation，ready queue 重排 | 高优先级 waiter 不被中优先级任务长期间接阻塞 |
+| [#2176](https://github.com/rcore-os/tgoskits/pull/2176) | 无法判断哪些 IRQ-save spin 锁实际不跑在 IRQ context | 在 `axtask` lockdep trace 中观测 IRQ-save spin/rwlock 获取上下文，并输出从未进入 IRQ context 的候选锁 | 为后续将非 IRQ spin no irq 锁替换为 mutex 提供候选清单和性能对比基线 |
 
 检测实现必须满足以下约束：
 
