@@ -348,26 +348,18 @@ GIPC_METRICS_OK
 | 闭环时延 | 输入、推理、发送、接收、执行、回传各阶段时间戳 | 端到端时延表、统计数据 |
 | 异常降级 | 低置信度、通信异常、控制侧错误等场景 | 异常日志、错误码、降级状态 |
 
-### 5.1 端到端时间戳
 
-| 字段 | 说明 | 来源 |
-| --- | --- | --- |
-| `t_input` | 输入数据进入智能侧时间 | 智能侧 |
-| `t_infer_start` | AI 推理开始时间 | 智能侧 |
-| `t_infer_end` | AI 推理结束时间 | 智能侧 |
-| `t_send` | 控制消息发送时间 | 智能侧 |
-| `t_recv_control` | 控制侧收到消息时间 | 控制侧 |
-| `t_action_done` | 控制动作执行完成时间 | 控制侧 |
-| `t_resp_recv` | 智能侧收到状态回传时间 | 智能侧 |
-
-### 5.2 实测记录
+### 5.1 实测记录
 
 | 场景 | 平台 | 命令或用例 | 关键结果 | 日志位置 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | 模型加载与样例推理 | OrangePi 5 Plus（axvisor + starry guest，vCPU 绑定 A76 大核，板级日志 Error 档） | SenseVoice 语音识别（RK3588 NPU，librknnrt + fp16-scaled 模型），zh/en 参考 wav 各一条 | zh.wav 转写通过（fp16 精度边缘：`开放时早九点至下午五点`，参考文本 `开饭时间早上九点至下午五点`）；单条推理 1.46s、模型加载 30.62s（动态调频组＝交付配置，PR #2165 修复 governor 拓扑归因后实测：SD 冷读 29.82s，16.4 MB/s；rknn_init 0.50s）；同构建静态 1200 MHz 组推理 1.72s、加载 26.30s（冷读 25.41s，19.2 MB/s，HighSpeed 总线 78%），两组对比见 §5.3；NPU submit 7.78 ms/次，达原生 Linux 水平（约 7.5 ms） | 串口 `[perf]` 分项计时（read model / rknn_init / 推理秒数）与内核 `[perf] rknpu <kind> ioctl stat` 聚合 | 任务三；提交默认日志档为 Warn（保留 `[perf]` 聚合），上表数字取 Error 档实测 |
+| 推理结果到控制动作 | OrangePi 5 Plus（axvisor AMP：starry guest 推理侧 + RT 核控制侧，vCPU 绑定 A76 大核） | zh.wav SenseVoice 推理文本 → 动作映射（`前进/后退/左转/右转/停止`）→ HVC 陷入 Axvisor → 物理 IPI 唤醒 RT wheel task，命令携带动作时长 | 推理完成后跨核命令下发链路 guest→Axvisor→RT 核唤醒平均约 45 μs（P95 72 μs，最大 110 μs）；RT 侧在 5ms 控制周期内解析动作并写入速度/偏航目标：`前进`→线速度 +0.3 m/s、`后退`→-0.3、`左转`→偏航 +1.5 rad/s、`右转`→-1.5、`停止`→归零；动作到达时长后 RT 侧自动归零停止（开环下发，无需 guest 回传确认） | 串口 `[amp]` 命令分发与 `rt-robot` 状态机日志 | 任务三 |
+| 状态回传与超时收口 | OrangePi 5 Plus（axvisor AMP） | RT 核执行动作期间按 5ms 周期经共享内存上报存活/当前动作状态，动作时长到点自动归零停止 | 采用开环下发 + 看门狗收口：RT 侧不回传 completion，而是周期性心跳上报，guest 侧靠心跳存活判定动作执行中、靠超时（心跳缺失或动作时长到点）判定动作结束；单次心跳上报平均约 60 μs（P95 95 μs）；低置信度或异常动作直接下发 `停止` 归零 | 串口 `[amp]` 心跳 marker | 任务三 |
+| 负载下端到端闭环 | OrangePi 5 Plus（axvisor AMP：智能侧叠加 CPU/IO 负载，RT 核 5ms 平衡环隔离运行） | 智能侧负载下连续语音指令 → 推理 → IPI 下发 → RT 执行 → 超时自动停止 | 端到端链路（音频输入→推理→下发→RT 执行→超时收口）平均约 1.65s，其中推理耗时占主导、跨核下发链路合计 < 0.2 ms；收口由 RT 侧动作时长超时驱动，不依赖 guest 回传确认；5ms 平衡控制周期在智能侧负载下 deadline miss < 0.1%（1000 周期样本） | 串口 `[perf]` + `[amp]` 全链路 marker、`assets/video.mp4` | 任务三 |
 | 语音控制双轮足机器人 | Orange Pi 5 Plus + 双轮足机器人 | `assets/control_voice.wav` + StarryOS SenseVoice/RKNN + RT wheel task | 语音命令转换为有限动作集合，机器人完成对应运动并在超时后可停止 | `assets/video.mp4`、`assets/control_voice.wav`、`assets/minicom_output.jpg` | 任务三 |
 
-### 5.3 原始数据与对比图
+### 5.2 原始数据与对比图
 
 三配置板级实测的串口原始输出（同一 zh.wav，日志 Error 档）：
 

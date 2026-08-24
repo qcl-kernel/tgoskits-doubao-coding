@@ -49,24 +49,6 @@ Axvisor 虚拟化与 AMP 隔离层负责智能侧 VM 生命周期管理、vCPU �
 
 AI 联动应用层负责把推理结果转换为控制语义，并通过任务二提供的控制通道发送到实时侧。实时侧执行后返回状态、时间戳和异常码，形成端到端闭环。
 
-```text
-AI 联动应用层
-  ├─ 智能侧：图像/传感输入 -> AI 推理 -> 控制指令生成
-  └─ 控制侧：指令解析 -> 控制执行 -> 状态回传
-
-智能侧客户机与实时侧控制层
-  ├─ Linux/StarryOS 智能侧客户机
-  └─ Axvisor 预留实时 CPU 上的 RT 控制任务
-
-Axvisor 虚拟化与 AMP 隔离层
-  ├─ 智能侧 VM/vCPU/地址空间/虚拟设备/中断与定时器
-  └─ 实时 CPU 预留、板级外设访问、资源分配与共享测试入口
-
-硬件与仿真平台层
-  ├─ QEMU 多架构验证
-  └─ 开发板/NPU/网络/块设备等外设资源
-```
-
 ### 2.2 客户机角色划分
 
 智能侧客户机负责计算密集型或系统服务型任务，典型职责包括输入数据采集、AI 模型加载、推理结果生成、控制策略封装、运行日志记录和异常上报。该客户机允许运行较完整的软件栈，重点强调功能完备性和模型运行能力。
@@ -79,16 +61,7 @@ Axvisor 作为统一底座，负责把智能侧 guest 与实时侧 CPU 放在同
 
 端到端链路从智能侧输入开始，经 AI 推理得到识别结果或决策结果，再由协议模块转换为控制消息。控制消息通过 RT mailbox、console 原型或后续结构化控制通道发送到 Axvisor 实时侧。实时侧控制任务执行控制动作，并将执行状态、错误码和时间戳返回智能侧。智能侧根据回传结果记录闭环状态，也可以在失败、超时或置信度不足时触发降级策略。
 
-```text
-输入数据
-  -> 智能侧客户机 AI 推理
-  -> 应用层协议封装
-  -> 控制通道
-  -> Axvisor 实时侧接收
-  -> 控制执行
-  -> 状态回传
-  -> 智能侧闭环记录与策略调整
-```
+![智能侧到实时侧的控制数据流](assets/control-data-flow.svg)
 
 ### 2.4 三任务依赖关系
 
@@ -207,14 +180,7 @@ RT FIFO 只能决定 ready task 的运行顺序，无法处理已经因 mutex �
 
 PI mutex 将任务优先级拆分为基础优先级和有效优先级。H 阻塞时把自己的有效优先级捐赠给 L；若 L 位于 ready queue，则 run queue 将它移除并按新优先级重新入队。L 因此能够抢占 M、完成临界区并释放 mutex；unlock 后 donation 被清理，L 恢复基础优先级。
 
-```text
-H 等待 L
-    -> H 向 L donation
-    -> effective_priority(L) = priority(H)
-    -> L 抢占 M 并释放 mutex
-    -> H 获得 mutex
-    -> L 恢复 base_priority
-```
+![PI mutex donation 与优先级恢复流程](assets/pi-mutex-donation-flow.svg)
 
 实现还覆盖：
 
@@ -263,16 +229,7 @@ ArceOS test suite run OK!
 
 ![spin-noirq 长持锁对实时调度的影响链](assets/spin-noirq-timer-impact.svg)
 
-影响链可以概括为：
-
-```text
-长时间持有 spin-noirq
-    -> 本地 IRQ 关闭
-    -> per-CPU timer 到期但无法响应
-    -> 定时唤醒和 reschedule 请求推迟
-    -> 高优先级任务无法及时抢占
-    -> jitter 与 deadline miss 增加
-```
+长时间关闭本地中断会同时延迟 timer 响应、任务唤醒和调度抢占，最终表现为实时抖动和 deadline miss。
 
 #### 3.4.2 滥用检测能力
 
@@ -994,3 +951,51 @@ cargo xtask starry test qemu --target aarch64 --stress
 ## 8. 结语
 
 本方案将“Axvisor 实时性与隔离”“控制通信”“AI 联动应用”统一到同一条技术链路中。任务一解决 Axvisor 在 AMP 混合系统中能否稳定运行，任务二解决智能侧与实时侧之间能否可靠交换控制语义，任务三证明前两项能力能够支撑实际 AI 控制闭环。该组织方式既保留每项任务的独立验收证据，也能体现项目整体技术价值。
+
+## 9. 三项任务的团队核心提交
+
+本节汇总 `rcore-os/tgoskits` 在 2026-06-24 至 2026-08-24 期间与本项目三项任务直接相关的团队提交，提交时间均为 UTC。三项任务的关键技术底座和核心实现均由团队成员 Debin（luodeb）、Zechen Peng（pengzechen）和 Xiaohui（buhenxihuan）持续推进，形成了“实时调度与 AMP 隔离—双客户机 IP 通信—AI 负载与实时控制联动”的完整支撑链路。
+
+### 9.1 任务一：实时性改造与验证
+
+任务一的核心是实时 CPU 隔离、确定性调度、优先级反转控制以及 RK3588 板级性能保障，相关提交全部来自本团队。
+
+| 核心 PR | 团队成员 | 提交时间 | 核心贡献 |
+| --- | --- | --- | --- |
+| [#2160](https://github.com/rcore-os/tgoskits/pull/2160) | Zechen Peng（pengzechen） | 2026-08-23 09:56 | 为 Axvisor 预留实时 CPU，建立实时任务与普通负载的 CPU 隔离基础。 |
+| [#2161](https://github.com/rcore-os/tgoskits/pull/2161) | Zechen Peng（pengzechen） | 2026-08-23 10:03 | 增加单核 RT FIFO 调度器，是任务一最明确的实时调度实现。 |
+| [#2162](https://github.com/rcore-os/tgoskits/pull/2162) | Zechen Peng（pengzechen） | 2026-08-23 10:12 | 基于 RT FIFO 调度器增加 mutex 优先级继承，降低优先级反转带来的最坏情况延迟。 |
+| [#2165](https://github.com/rcore-os/tgoskits/pull/2165) | Xiaohui（buhenxihuan） | 2026-08-23 10:36 | 修复 RK3588 governor 对逻辑 CPU、物理 CPU 及大小核集群的负载归因，确保绑定核获得正确频率。 |
+| [#2166](https://github.com/rcore-os/tgoskits/pull/2166) | Xiaohui（buhenxihuan） | 2026-08-23 10:38 | 将 guest vCPU 绑定到 A76 大核，并优化日志、ioctl 计时和文件预读路径，提供模型加载、推理和吞吐量数据。 |
+| [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | Debin（luodeb） | 2026-08-24 08:35 | 增加 AArch64/RK3588 AMP 支持、`realtime_cpu_id`、实时任务入口、Starry 与宿主 AMP 用例，以及 FDT、GIC、MMIO、NVMe DMA 修复。 |
+
+这组提交形成了从调度策略、锁竞争控制、CPU 亲和性到 AArch64/RK3588 AMP 运行与验证的完整任务一实现链。
+
+### 9.2 任务二：客户机间通信
+
+任务二的核心是双客户机 VirtIO-net/IP 数据通道、应用层协议、异常恢复和量化验证，由 Debin（luodeb）连续实现并验证。
+
+| 核心 PR | 团队成员 | 提交时间 | 核心贡献 |
+| --- | --- | --- | --- |
+| [#1926](https://github.com/rcore-os/tgoskits/pull/1926) | Debin（luodeb） | 2026-08-08 17:01 | 保留生成的 guest FDT 中的 PSCI 节点，解决 AArch64 guest 启动基础问题，为双客户机运行提供前置条件。 |
+| [#1927](https://github.com/rcore-os/tgoskits/pull/1927) | Debin（luodeb） | 2026-08-08 17:01 | 实现双客户机 VirtIO-net、VirtIO MMIO、split virtqueue、内部二层交换机、DMA polling、vCPU wake，以及双 ArceOS guest TCP 数据校验。 |
+| [#2155](https://github.com/rcore-os/tgoskits/pull/2155) | Debin（luodeb） | 2026-08-23 08:21 | 通过 VirtIO-net 和 Axvisor 内部二层交换机连接 StarryOS、ArceOS 客户机。 |
+| [#2156](https://github.com/rcore-os/tgoskits/pull/2156) | Debin（luodeb） | 2026-08-23 08:21 | 定义含版本、消息类型、载荷长度、序号、时间戳、错误码和 CRC32 的应用层协议，并实现 TCP 分帧。 |
+| [#2157](https://github.com/rcore-os/tgoskits/pull/2157) | Debin（luodeb） | 2026-08-23 08:22 | 增加超时、有界重试、断连重连、异常恢复及重复、乱序、过期消息处理。 |
+| [#2158](https://github.com/rcore-os/tgoskits/pull/2158) | Debin（luodeb） | 2026-08-23 08:22 | 建立双客户机 QEMU 验证流程，统计请求成功率、超时、RTT P50/P95 和有效吞吐量。 |
+| [#2159](https://github.com/rcore-os/tgoskits/pull/2159) | Debin（luodeb） | 2026-08-23 08:22 | 补齐 StarryOS 网络初始化、rootfs 注入、递增序号、ERROR 帧及重连和恢复指标。 |
+
+这组提交覆盖从虚拟网卡和交换机底座，到 IP 链路、应用协议、可靠性机制和结果采集的任务二完整路径。
+
+### 9.3 任务三：AI 模型与控制联动
+
+任务三复用团队在前两项任务中建立的实时运行环境和跨客户机网络，将 AI 推理负载与实时控制侧连接起来。其核心工程支撑同样来自本团队：
+
+| 核心 PR | 团队成员 | 提交时间 | 对任务三的支撑 |
+| --- | --- | --- | --- |
+| [#2166](https://github.com/rcore-os/tgoskits/pull/2166) | Xiaohui（buhenxihuan） | 2026-08-23 10:38 | 在 Orange Pi 5 Plus 上针对 SenseVoice NPU 工作负载优化 vCPU 绑定、模型读取、推理和日志路径，为智能侧模型部署提供性能依据。 |
+| [#2155](https://github.com/rcore-os/tgoskits/pull/2155)–[#2159](https://github.com/rcore-os/tgoskits/pull/2159) | Debin（luodeb） | 2026-08-23 | 提供 AI 输出发送、控制指令传输、状态回传、错误通知、异常恢复和端到端指标所需的双客户机 IP 通信链路。 |
+| [#2160](https://github.com/rcore-os/tgoskits/pull/2160)–[#2162](https://github.com/rcore-os/tgoskits/pull/2162) | Zechen Peng（pengzechen） | 2026-08-23 | 提供实时 CPU 隔离、RT FIFO 调度和优先级继承，使 AI 负载与实时控制任务能够在确定性调度边界内共存。 |
+| [#2175](https://github.com/rcore-os/tgoskits/pull/2175) | Debin（luodeb） | 2026-08-24 08:35 | 提供 StarryOS 与宿主实时任务 AMP 共存、板级设备映射和运行入口，使智能侧与实时控制侧能够在同一 Axvisor 系统中联动。 |
+
+因此，任务三不是孤立的应用拼接，而是建立在团队完成的 AI 负载优化、实时调度、AMP 隔离和双客户机 IP 通信核心提交之上的闭环演示。三位团队成员的工作共同覆盖三个任务之间最关键的运行时边界和数据链路。

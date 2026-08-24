@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">PI mutex donation 与优先级恢复流程</title>
+  <desc id="svg-desc">高优先级任务等待低优先级 owner 时进行优先级捐赠，使 owner 抢占中优先级任务并释放锁，随后高优先级任务获得锁，owner 恢复基础优先级。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="green-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#059669"/>
+    </marker>
+    <style>
+      .label { font: 700 17px Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .body { font: 400 14px Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #334155; }
+      .small { font: 400 12px Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #475569; }
+      .lane { stroke-width: 1.8; rx: 12; ry: 12; }
+      .event { stroke-width: 1.5; rx: 8; ry: 8; }
+      .time { stroke: #94a3b8; stroke-width: 2; marker-end: url(#arrow); }
+      .dash { stroke: #94a3b8; stroke-width: 1.5; stroke-dasharray: 6 5; }
+      .flow { fill: none; stroke: #059669; stroke-width: 2.4; marker-end: url(#green-arrow); }
+      .wait { stroke: #f59e0b; stroke-width: 4; stroke-dasharray: 8 6; }
+    </style>
+  </defs>
+
+  <rect width="1180" height="520" fill="#f8fafc"/>
+  <line x1="175" y1="55" x2="1125" y2="55" class="time"/>
+  <text x="150" y="60" text-anchor="end" class="small">时间</text>
+
+  <rect x="25" y="85" width="1130" height="105" class="lane" fill="#eff6ff" stroke="#3b82f6"/>
+  <rect x="25" y="210" width="1130" height="105" class="lane" fill="#fff7ed" stroke="#f97316"/>
+  <rect x="25" y="335" width="1130" height="105" class="lane" fill="#f0fdf4" stroke="#22c55e"/>
+
+  <text x="105" y="125" text-anchor="middle" class="label">H · 高优先级</text>
+  <text x="105" y="151" text-anchor="middle" class="small">mutex waiter</text>
+  <text x="105" y="250" text-anchor="middle" class="label">M · 中优先级</text>
+  <text x="105" y="276" text-anchor="middle" class="small">干扰任务</text>
+  <text x="105" y="375" text-anchor="middle" class="label">L · 低优先级</text>
+  <text x="105" y="401" text-anchor="middle" class="small">mutex owner</text>
+
+  <line x1="175" y1="85" x2="175" y2="440" class="dash"/>
+  <line x1="335" y1="85" x2="335" y2="440" class="dash"/>
+  <line x1="510" y1="85" x2="510" y2="440" class="dash"/>
+  <line x1="690" y1="85" x2="690" y2="440" class="dash"/>
+  <line x1="875" y1="85" x2="875" y2="440" class="dash"/>
+
+  <rect x="195" y="360" width="120" height="54" class="event" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="255" y="382" text-anchor="middle" class="body">L 持有锁</text>
+  <text x="255" y="402" text-anchor="middle" class="small">base = low</text>
+
+  <rect x="355" y="110" width="135" height="54" class="event" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="422" y="132" text-anchor="middle" class="body">H 请求锁</text>
+  <text x="422" y="152" text-anchor="middle" class="small">进入等待</text>
+
+  <path d="M422 164 V335" class="flow"/>
+  <rect x="530" y="350" width="140" height="74" class="event" fill="#bbf7d0" stroke="#059669"/>
+  <text x="600" y="373" text-anchor="middle" class="body">H → L donation</text>
+  <text x="600" y="395" text-anchor="middle" class="small">effective(L)</text>
+  <text x="600" y="413" text-anchor="middle" class="small">= priority(H)</text>
+
+  <rect x="530" y="235" width="140" height="54" class="event" fill="#ffedd5" stroke="#f97316"/>
+  <text x="600" y="257" text-anchor="middle" class="body">M 保持 ready</text>
+  <text x="600" y="277" text-anchor="middle" class="small">不再压制 L</text>
+
+  <path d="M670 387 H710" class="flow"/>
+  <rect x="715" y="350" width="140" height="74" class="event" fill="#bbf7d0" stroke="#059669"/>
+  <text x="785" y="373" text-anchor="middle" class="body">L 抢占 M</text>
+  <text x="785" y="395" text-anchor="middle" class="small">完成临界区</text>
+  <text x="785" y="413" text-anchor="middle" class="small">unlock mutex</text>
+
+  <line x1="355" y1="137" x2="855" y2="137" class="wait"/>
+  <text x="610" y="125" text-anchor="middle" class="small">H 阻塞等待，CPU 让给被提升的 owner</text>
+
+  <path d="M785 350 C785 215 895 210 895 164" class="flow"/>
+  <rect x="895" y="110" width="210" height="54" class="event" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="1000" y="132" text-anchor="middle" class="body">H 获得 mutex 并继续</text>
+  <text x="1000" y="152" text-anchor="middle" class="small">实时工作完成</text>
+
+  <rect x="895" y="360" width="210" height="54" class="event" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="1000" y="382" text-anchor="middle" class="body">L 清理 donation</text>
+  <text x="1000" y="402" text-anchor="middle" class="small">恢复 base priority</text>
+  <path d="M855 387 H895" class="flow"/>
+
+  <rect x="305" y="465" width="570" height="38" rx="10" fill="#dcfce7" stroke="#059669" stroke-width="1.5"/>
+  <text x="590" y="489" text-anchor="middle" class="label">启用 PI：提升 owner 使锁依赖链及时向前推进</text>
+</svg>
