@@ -283,28 +283,24 @@ sequenceDiagram
 
 每个阶段都必须保持默认配置可构建、可运行，不允许先合入闲置公共 API 或返回假成功的占位路径。改变 secondary CPU 启动顺序、CPU ownership、IRQ route 或推荐调试方法时，同步更新 `arch-platform-porting` 技能或其引用文档。
 
-### 3.10 验证矩阵与实时性口径
+### 3.10 spin no irq 锁优化验证口径
 
-| 风险或功能声明 | 验证层级 | 必须观察的结果 |
+本阶段的锁优化不直接猜测哪些 `SpinLock::lock_irqsave()` 可以替换，而是先建立可复现的观测数据，再做最小范围替换，最后用同一 workload 对比优化前后的性能和实时性指标。
+
+| 阶段 | 目标 | 必须观察的结果 |
 | --- | --- | --- |
-| 编译期实时核配置正确 | 构建/单元测试 | `-1` 转换为 `None`；有效 ID 派生唯一 mask；其他负数、越界、离线或 BSP ID 被拒绝 |
-| 实时任务创建边界 | `axtask` 单元/集成测试 | `spawn_realtime()` 自动绑到指定核；禁用时返回 `RealtimeDisabled`；调用方无法传入 mask |
-| RT FIFO 语义 | `axsched` 单元测试 | 高优先级先运行、同优先级 FIFO、仅更高优先级触发 RT 抢占 |
-| 4 核启动分流 | Axvisor QEMU SMP4 | virtualization CPU host ready，指定 CPU RT ready，无 readiness 死等；`-1` 时 4 核均走普通路径 |
-| Starry vCPU 隔离 | Axvisor + StarryOS SMP3 | vCPU task 从未在指定实时核执行 |
-| housekeeping 隔离 | QEMU instrumentation/板卡统计 | 普通 task、block hctx、console worker 从未进入指定实时核 |
-| IRQ 隔离 | QEMU 模拟 IRQ/板卡 | 非 RT IRQ 计数在指定实时核始终为零 |
-| 通信正确性 | IVC/mailbox 集成测试 | 顺序、边界、满队列、重启和超时行为确定 |
-| PI mutex | 确定性三任务回归 | 中优先级任务不能长期间接阻塞高优先级 waiter |
-| 8ms 控制闭环 | RK3588 压力测试 | 报告最大 wake-up latency、最大 jitter、WCET 和 deadline miss，而非只报平均值 |
+| 1. 观测 spin no irq 使用 | 在 `axtask` lockdep trace 中记录 IRQ-save spin/rwlock 成功获取时是否处于 IRQ context | dump 能列出本轮 workload 中“使用 IRQ-save 获取、但从未在 IRQ context 中出现”的锁实例，同时给出获取调用点和锁 class 创建点 |
+| 2. 替换非 IRQ 锁 | 将确认只在任务上下文使用、且不属于调度器敏感或 raw 上下文的 spin no irq 锁替换为 sleepable mutex | 替换点不再关闭本地 IRQ；不会进入 IRQ handler、scheduler raw path 或不可睡眠临界区；原有功能测试和 lockdep 检查保持通过 |
+| 3. 对比优化收益 | 使用同一构建、同一负载和同一统计口径对比替换前后 | 记录 lock hold/wait 行为、IRQ-off 时间、调度延迟、wake-up latency、jitter、吞吐或控制周期 deadline miss；只报告平均值不足以证明优化有效 |
 
-实时性结果必须记录硬件型号、CPU 频率策略、测试时长、样本数、StarryOS 压力负载、IRQ 配置和统计方法。平均值只能说明常见开销，不能替代最大值、分位数和 deadline miss。建议至少分别测试空载、guest CPU 压力、网络压力、存储压力和组合压力，并以 bare RTOS、RTOS guest 和 AMP 三条路径使用同一测量定义进行对照。
+性能结果必须记录硬件型号、CPU 频率策略、测试时长、样本数、StarryOS 压力负载、IRQ 配置、开启的 lockdep/trace 配置和统计方法。替换收益以优化前后同场景对照为准；如果某个锁在扩展 workload 中被观测到进入 IRQ context，必须撤回替换或拆分锁边界。
 
 | PR | 解决的问题 | 关键机制 | 验证重点 |
 | --- | --- | --- | --- |
 | [#2160](https://github.com/rcore-os/tgoskits/pull/2160) | Axvisor 层缺少 CPU 所有权边界 | CPU owner、secondary 分流、VM placement 与资源排除设计 | 本方案复用其分区原则，但 RT CPU 保留受限 `axtask` 调度域 |
 | [#2161](https://github.com/rcore-os/tgoskits/pull/2161) | 默认 FIFO 不支持 RT 优先级 | `RtFifoScheduler` 按有效优先级和 FIFO 顺序选任务 | 高优先级先运行、同优先级 FIFO、tick 抢占判定 |
 | [#2162](https://github.com/rcore-os/tgoskits/pull/2162) | mutex 未使用优先级，存在优先级反转 | base/donated/effective priority，owner donation，ready queue 重排 | 高优先级 waiter 不被中优先级任务长期间接阻塞 |
+| [#2176](https://github.com/rcore-os/tgoskits/pull/2176) | 无法判断哪些 IRQ-save spin 锁实际不跑在 IRQ context | 在 `axtask` lockdep trace 中观测 IRQ-save spin/rwlock 获取上下文，并输出从未进入 IRQ context 的候选锁 | 为后续将非 IRQ spin no irq 锁替换为 mutex 提供候选清单和性能对比基线 |
 
 三项改动并非无需适配即可直接叠加：#2160 当前独立 RT executor 方向与 #2161/#2162 的 `axtask` 依赖存在架构差异。本方案选择以 #2161 为第一阶段调度基础，复用 #2160 的 CPU 所有权和隔离原则，将 realtime CPU 改造成受限单核 `axtask` domain，再接入 #2162 的有效优先级和 donation。这样才能形成“CPU 分区、RT 调度、锁等待、IRQ 隔离和有界通信”一致的完整链路，并支撑任务三中双轮足机器人 8ms 平衡闭环。
 
