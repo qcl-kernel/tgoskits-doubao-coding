@@ -207,14 +207,7 @@ RT FIFO 只能决定 ready task 的运行顺序，无法处理已经因 mutex �
 
 PI mutex 将任务优先级拆分为基础优先级和有效优先级。H 阻塞时把自己的有效优先级捐赠给 L；若 L 位于 ready queue，则 run queue 将它移除并按新优先级重新入队。L 因此能够抢占 M、完成临界区并释放 mutex；unlock 后 donation 被清理，L 恢复基础优先级。
 
-```text
-H 等待 L
-    -> H 向 L donation
-    -> effective_priority(L) = priority(H)
-    -> L 抢占 M 并释放 mutex
-    -> H 获得 mutex
-    -> L 恢复 base_priority
-```
+![PI mutex donation 与优先级恢复流程](assets/pi-mutex-donation-flow.svg)
 
 实现还覆盖：
 
