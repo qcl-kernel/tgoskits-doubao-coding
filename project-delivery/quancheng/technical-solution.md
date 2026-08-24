@@ -325,7 +325,7 @@ AMP_RT_RESULT source=host samples=1000 period_us=1000 p50_us=0 p99_us=0 max_us=1
 
 ```bash
 cargo xtask starry build --config test-suit/axvisor/guest-build/starry-aarch64-amp.toml --smp 1
-cargo xtask axvisor test qemu --arch aarch64 -g normal -c qemu-amp/starry-host-rt
+cargo xtask axvisor test qemu --arch aarch64 -g normal -c qemu-amp/starry-host-amp
 ```
 
 该结果只证明 QEMU 下的启动、placement、调度与 DMA 契约；真实板卡仍需补测设备 IRQ 归属、缓存/内存总线竞争、电源管理中断和长时间 deadline miss。

@@ -73,7 +73,7 @@ and keeps CPU 3 for the host realtime task:
 cargo xtask starry build \
   --config test-suit/axvisor/guest-build/starry-aarch64-amp.toml --smp 1
 cargo xtask axvisor test qemu \
-  --arch aarch64 -g normal -c qemu-amp/starry-host-rt
+  --arch aarch64 -g normal -c qemu-amp/starry-host-amp
 ```
 
 Its single success expression requires both the Starry shell marker and the
