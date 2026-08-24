@@ -24,7 +24,6 @@ fn main() {
     println!("GIPC_RTOS_READY");
     if let Err(error) = run() {
         println!("GIPC_RTOS_ERROR {error}");
-        return;
     }
 }
 
