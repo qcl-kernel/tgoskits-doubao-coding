@@ -46,6 +46,22 @@ pub fn default_task_stack_size() -> usize {
     crate::build_info::DEFAULT_TASK_STACK_SIZE
 }
 
+/// Returns the logical CPU reserved for realtime work.
+pub const fn realtime_cpu_id() -> Option<usize> {
+    crate::build_info::REALTIME_CPU_ID
+}
+
+/// Errors returned while creating a realtime task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SpawnRealtimeError {
+    /// No realtime CPU was selected at build time.
+    #[error("realtime CPU is disabled")]
+    RealtimeDisabled,
+    /// Realtime FIFO priorities must be positive.
+    #[error("realtime priority must be positive and fit in i32")]
+    InvalidPriority,
+}
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "sched-rr")] {
         const MAX_TIME_SLICE: usize = 5;
@@ -322,6 +338,31 @@ where
     F: FnOnce() + Send + 'static,
 {
     spawn_task(TaskInner::new(f, name, stack_size))
+}
+
+/// Spawns a task pinned to the build-time realtime CPU before its first enqueue.
+#[cfg(feature = "realtime-task")]
+pub fn spawn_realtime<F>(
+    f: F,
+    name: String,
+    stack_size: usize,
+    priority: isize,
+) -> Result<AxTaskRef, SpawnRealtimeError>
+where
+    F: FnOnce() + Send + 'static,
+{
+    let cpu_id = realtime_cpu_id().ok_or(SpawnRealtimeError::RealtimeDisabled)?;
+    let priority = i32::try_from(priority)
+        .ok()
+        .filter(|priority| *priority > 0)
+        .ok_or(SpawnRealtimeError::InvalidPriority)?;
+    Ok(spawn_task_with(
+        TaskInner::new(f, name, stack_size),
+        |task| {
+            task.set_cpumask(AxCpuMask::one_shot(cpu_id));
+            task.set_sched_priority(priority);
+        },
+    ))
 }
 
 /// Spawns a new task with the given name and the default stack size.

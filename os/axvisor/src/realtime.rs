@@ -9,7 +9,6 @@ const PERIOD: Duration = Duration::from_millis(1);
 const WARMUP_SAMPLES: usize = 100;
 const MEASURED_SAMPLES: usize = 1_000;
 const REALTIME_PRIORITY: isize = 80;
-const START_DELAY: Duration = Duration::from_secs(3);
 
 /// Starts the host realtime latency workload on the configured realtime CPU.
 pub fn start() {
@@ -26,8 +25,6 @@ pub fn start() {
 }
 
 fn run() {
-    // Keep platform startup effects outside the measurement window.
-    ax_hal::time::busy_wait_until(ax_hal::time::monotonic_time() + START_DELAY);
     info!("AMP_RT_READY source=host");
     let mut lateness_us = Vec::with_capacity(MEASURED_SAMPLES);
     let mut expected = Instant::now();
@@ -56,14 +53,14 @@ fn run() {
         .iter()
         .filter(|latency| **latency >= 1_000)
         .count();
-    info!(
-        "AMP_RT_RESULT source=host samples={} period_us=1000 p50_us={} p99_us={} max_us={} missed={}",
+    let _ = ax_std::os::arceos::modules::ax_runtime::emergency_console::write_fmt(format_args!(
+        "AMP_RT_RESULT source=host samples={} period_us=1000 p50_us={} p99_us={} max_us={} missed={}\n",
         lateness_us.len(),
         p50,
         p99,
         max,
-        missed
-    );
+        missed,
+    ));
 
     // A realtime CPU is intentionally outside the normal scheduler domain.
     // Keep its owner task resident after the finite benchmark instead of

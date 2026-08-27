@@ -483,7 +483,7 @@ pub(crate) fn build_address_layout(
     }
 
     for device in passthrough_devices {
-        let mut segments = alloc::vec![(device.base_gpa, device.base_hpa, device.length)];
+        let mut segments = vec![(device.base_gpa, device.base_hpa, device.length)];
         for resource in emulated_resources {
             let Resource::MmioRange { base, size } = *resource else {
                 continue;
@@ -522,7 +522,7 @@ fn subtract_linear_segment(
     let segment_end = base_gpa.saturating_add(length);
     let hole_end = hole_base.saturating_add(hole_size);
     if hole_end <= base_gpa || hole_base >= segment_end {
-        return alloc::vec![(base_gpa, base_hpa, length)];
+        return vec![(base_gpa, base_hpa, length)];
     }
 
     let mut remaining = Vec::with_capacity(2);
