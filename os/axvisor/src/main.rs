@@ -40,6 +40,8 @@ mod guest_console;
 #[cfg(feature = "http-axum")]
 mod http;
 mod manager;
+#[cfg(feature = "realtime-benchmark")]
+mod realtime;
 mod shell;
 
 #[cfg(any(feature = "backtrace", feature = "test-panic-no-backtrace"))]
@@ -95,6 +97,7 @@ fn main() {
     guest_console::configure_host_console()
         .unwrap_or_else(|error| panic!("failed to configure host console: {error:#}"));
 
+    #[cfg(not(feature = "realtime-benchmark"))]
     guest_console::submit_host_bytes(banner::STARTUP);
 
     info!("Starting virtualization...");
@@ -102,6 +105,9 @@ fn main() {
         .unwrap_or_else(|error| panic!("failed to initialize AxVM manager: {error:#}"));
 
     manager.init_default_vms();
+
+    #[cfg(feature = "realtime-benchmark")]
+    realtime::start();
 
     // The management HTTP server accepts connections in a loop and needs its
     // own task so neither the shell nor the VMM blocks it. It is spawned first
